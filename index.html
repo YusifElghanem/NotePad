@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collaborative Notepad</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="controls">
+    <button id="undo">Undo</button>
+    <button id="redo">Redo</button>
+  </div>
+  <div id="notepad" contenteditable="true"></div>
+  <footer>Collaborative Notepad © 2024</footer>
+
+  <script>
+    const notepad = document.getElementById('notepad');
+    const undoButton = document.getElementById('undo');
+    const redoButton = document.getElementById('redo');
+
+    // History Stack for Undo/Redo
+    const history = [];
+    let historyIndex = -1;
+
+    // Fetch initial content
+    async function fetchContent() {
+      const response = await fetch('/api/notepad');
+      const data = await response.json();
+      notepad.innerHTML = data.content || '';
+      saveHistory(data.content);
+    }
+
+    // Save content to server
+    async function saveContent() {
+      const content = notepad.innerHTML;
+      await fetch('/api/notepad', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+    }
+
+    // Save history
+    function saveHistory(content) {
+      if (history[historyIndex] !== content) {
+        history.push(content);
+        historyIndex++;
+      }
+    }
+
+    // Undo/Redo functionality
+    undoButton.addEventListener('click', () => {
+      if (historyIndex > 0) {
+        historyIndex--;
+        notepad.innerHTML = history[historyIndex];
+        saveContent();
+      }
+    });
+
+    redoButton.addEventListener('click', () => {
+      if (historyIndex < history.length - 1) {
+        historyIndex++;
+        notepad.innerHTML = history[historyIndex];
+        saveContent();
+      }
+    });
+
+    // Update content on input
+    notepad.addEventListener('input', () => {
+      saveHistory(notepad.innerHTML);
+      saveContent();
+    });
+
+    // Real-time updates using Server-Sent Events
+    const eventSource = new EventSource('/api/stream');
+
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (notepad.innerHTML !== data.content) {
+        notepad.innerHTML = data.content;
+        saveHistory(data.content); // Update history stack
+      }
+    };
+
+    fetchContent(); // Load initial content
+  </script>
+</body>
+</html>
