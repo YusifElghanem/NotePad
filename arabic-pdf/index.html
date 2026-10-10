@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>محوّل Word إلى PDF</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --text: #1d2433;
+    --muted: #667085;
+    --border: #d9dee8;
+    --accent: #2f6fed;
+    --accent-soft: #e8efff;
+    --ok: #12805c;
+    --err: #c0362c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11141b;
+      --card: #1a1f2a;
+      --text: #e7eaf0;
+      --muted: #98a2b3;
+      --border: #2c3444;
+      --accent: #6c9bff;
+      --accent-soft: #1f2b45;
+      --ok: #3ccf91;
+      --err: #ff7b6e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", Tahoma, "Noto Sans Arabic", "Geeza Pro", Arial, sans-serif;
+    line-height: 1.6;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+  main { width: 100%; max-width: 760px; }
+  header { margin-bottom: 20px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  header p { margin: 0; color: var(--muted); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  #drop {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 36px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  #drop:hover, #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  #drop .big { font-size: 1.1rem; font-weight: 600; }
+  #drop .small { color: var(--muted); font-size: .9rem; }
+  #fileName { margin-top: 8px; font-weight: 600; color: var(--accent); word-break: break-all; }
+  .options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; color: var(--muted); }
+  select, input[type=number] {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 8px;
+  }
+  details { margin-top: 14px; font-size: .9rem; }
+  summary { cursor: pointer; color: var(--muted); }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  button, .btn {
+    font: inherit;
+    font-weight: 600;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 20px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+  }
+  #convert { background: var(--accent); color: #fff; }
+  #convert:disabled { opacity: .5; cursor: not-allowed; }
+  #download { background: var(--ok); color: #fff; }
+  .hidden { display: none !important; }
+  .progress { height: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 99px; overflow: hidden; }
+  .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #status { margin-top: 10px; font-size: .95rem; }
+  #status.ok { color: var(--ok); }
+  #status.err { color: var(--err); }
+  #stats { color: var(--muted); font-size: .85rem; margin-top: 4px; }
+  iframe { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>محوّل مستندات Word العربية إلى PDF</h1>
+    <p>ارفع ملف ‎.docx‎ وسيتم إنشاء ملف PDF تُرسم فيه كل كلمة وعلامة ترقيم ككتلة نصية مستقلة بإحداثيات مطلقة.</p>
+  </header>
+
+  <section class="card">
+    <div id="drop" tabindex="0" role="button" aria-label="اختر ملف Word">
+      <div class="big">اسحب ملف Word إلى هنا أو انقر للاختيار</div>
+      <div class="small">الصيغة المدعومة: ‎.docx‎ — تتم المعالجة بالكامل داخل متصفحك ولا يُرفع أي شيء إلى خادم.</div>
+      <div id="fileName"></div>
+    </div>
+    <input type="file" id="fileInput" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+
+    <div class="options">
+      <label>حجم الخط
+        <input type="number" id="fontSize" value="14" min="8" max="32" step="1">
+      </label>
+      <label>تباعد الأسطر
+        <select id="lineSpacing">
+          <option value="1.6">ضيّق</option>
+          <option value="1.9" selected>عادي</option>
+          <option value="2.3">واسع</option>
+        </select>
+      </label>
+      <label>المحاذاة
+        <select id="align">
+          <option value="justify" selected>ضبط (Justify)</option>
+          <option value="right">يمين</option>
+        </select>
+      </label>
+      <label>حجم الصفحة
+        <select id="pageSize">
+          <option value="A4" selected>A4</option>
+          <option value="Letter">Letter</option>
+        </select>
+      </label>
+    </div>
+
+    <details>
+      <summary>خط مخصص (اختياري)</summary>
+      <p>يُستخدم خط Amiri تلقائيًا. يمكنك بدلًا من ذلك اختيار ملف خط عربي ‎.ttf‎ أو ‎.otf‎ من جهازك.</p>
+      <input type="file" id="fontInput" accept=".ttf,.otf">
+    </details>
+
+    <div class="actions">
+      <button id="convert" disabled>تحويل إلى PDF</button>
+      <a id="download" class="btn hidden" download="document.pdf">تنزيل ملف PDF</a>
+    </div>
+  </section>
+
+  <section class="card" id="progressCard">
+    <div class="progress"><div id="bar"></div></div>
+    <div id="status">بانتظار اختيار ملف…</div>
+    <div id="stats"></div>
+  </section>
+
+  <section class="card hidden" id="previewCard">
+    <iframe id="preview" title="معاينة PDF"></iframe>
+  </section>
+</main>
+
+<script>
+'use strict';
+
+/* ======================================================================
+ * 1. Library + font sources (each with fallbacks)
+ * ====================================================================== */
+const LIBS = {
+  PDFLib: [
+    'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js',
+    'https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js',
+  ],
+  fontkit: [
+    'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
+    'https://unpkg.com/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
+  ],
+  mammoth: [
+    'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js',
+    'https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js',
+  ],
+};
+
+// Same-origin copy first (put the .ttf files in ./fonts/ next to this page),
+// then Google Fonts' GitHub repository (CORS-enabled), then its jsDelivr mirror.
+const FONT_SOURCES = {
+  regular: [
+    'fonts/Amiri-Regular.ttf',
+    'https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Regular.ttf',
+    'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/amiri/Amiri-Regular.ttf',
+  ],
+  bold: [
+    'fonts/Amiri-Bold.ttf',
+    'https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Bold.ttf',
+    'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/amiri/Amiri-Bold.ttf',
+  ],
+};
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => { s.remove(); reject(new Error('failed: ' + src)); };
+    document.head.appendChild(s);
+  });
+}
+
+async function loadLib(name) {
+  if (window[name]) return;
+  for (const url of LIBS[name]) {
+    try { await loadScript(url); if (window[name]) return; } catch (e) { console.warn(e.message); }
+  }
+  throw new Error('تعذّر تحميل المكتبة: ' + name);
+}
+
+async function fetchFirst(urls) {
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength > 1000) return buf;
+      }
+    } catch (e) { console.warn('font fetch failed', url, e); }
+  }
+  return null;
+}
+
+/* ======================================================================
+ * 2. Arabic shaping → Presentation Forms
+ *    pdf-lib's own shaping garbles Arabic, so each letter is converted to
+ *    its contextual form (isolated / final / initial / medial) here.
+ * ====================================================================== */
+// code point → [isolated, final, initial, medial]; 2-entry arrays join on the right only.
+const FORMS = {
+  0x0621: [0xFE80], 0x0622: [0xFE81, 0xFE82], 0x0623: [0xFE83, 0xFE84],
+  0x0624: [0xFE85, 0xFE86], 0x0625: [0xFE87, 0xFE88], 0x0626: [0xFE89, 0xFE8A, 0xFE8B, 0xFE8C],
+  0x0627: [0xFE8D, 0xFE8E], 0x0628: [0xFE8F, 0xFE90, 0xFE91, 0xFE92], 0x0629: [0xFE93, 0xFE94],
+  0x062A: [0xFE95, 0xFE96, 0xFE97, 0xFE98], 0x062B: [0xFE99, 0xFE9A, 0xFE9B, 0xFE9C],
+  0x062C: [0xFE9D, 0xFE9E, 0xFE9F, 0xFEA0], 0x062D: [0xFEA1, 0xFEA2, 0xFEA3, 0xFEA4],
+  0x062E: [0xFEA5, 0xFEA6, 0xFEA7, 0xFEA8], 0x062F: [0xFEA9, 0xFEAA], 0x0630: [0xFEAB, 0xFEAC],
+  0x0631: [0xFEAD, 0xFEAE], 0x0632: [0xFEAF, 0xFEB0], 0x0633: [0xFEB1, 0xFEB2, 0xFEB3, 0xFEB4],
+  0x0634: [0xFEB5, 0xFEB6, 0xFEB7, 0xFEB8], 0x0635: [0xFEB9, 0xFEBA, 0xFEBB, 0xFEBC],
+  0x0636: [0xFEBD, 0xFEBE, 0xFEBF, 0xFEC0], 0x0637: [0xFEC1, 0xFEC2, 0xFEC3, 0xFEC4],
+  0x0638: [0xFEC5, 0xFEC6, 0xFEC7, 0xFEC8], 0x0639: [0xFEC9, 0xFECA, 0xFECB, 0xFECC],
+  0x063A: [0xFECD, 0xFECE, 0xFECF, 0xFED0], 0x0641: [0xFED1, 0xFED2, 0xFED3, 0xFED4],
+  0x0642: [0xFED5, 0xFED6, 0xFED7, 0xFED8], 0x0643: [0xFED9, 0xFEDA, 0xFEDB, 0xFEDC],
+  0x0644: [0xFEDD, 0xFEDE, 0xFEDF, 0xFEE0], 0x0645: [0xFEE1, 0xFEE2, 0xFEE3, 0xFEE4],
+  0x0646: [0xFEE5, 0xFEE6, 0xFEE7, 0xFEE8], 0x0647: [0xFEE9, 0xFEEA, 0xFEEB, 0xFEEC],
+  0x0648: [0xFEED, 0xFEEE], 0x0649: [0xFEEF, 0xFEF0], 0x064A: [0xFEF1, 0xFEF2, 0xFEF3, 0xFEF4],
+  0x0671: [0xFB50, 0xFB51], 0x067E: [0xFB56, 0xFB57, 0xFB58, 0xFB59],
+  0x0686: [0xFB7A, 0xFB7B, 0xFB7C, 0xFB7D], 0x0698: [0xFB8A, 0xFB8B],
+  0x06A9: [0xFB8E, 0xFB8F, 0xFB90, 0xFB91], 0x06AF: [0xFB92, 0xFB93, 0xFB94, 0xFB95],
+  0x06CC: [0xFBFC, 0xFBFD, 0xFBFE, 0xFBFF],
+  0x0640: [0x0640, 0x0640, 0x0640, 0x0640], // tatweel
+};
+// lam + alef variant → [isolated, final] ligature
+const LAM_ALEF = { 0x0622: [0xFEF5, 0xFEF6], 0x0623: [0xFEF7, 0xFEF8], 0x0625: [0xFEF9, 0xFEFA], 0x0627: [0xFEFB, 0xFEFC] };
+
+const isTransparent = cp => (cp >= 0x064B && cp <= 0x065F) || cp === 0x0670 ||
+  (cp >= 0x06D6 && cp <= 0x06ED) || (cp >= 0x0610 && cp <= 0x061A);
+const joinsLeft = cp => FORMS[cp] && FORMS[cp].length === 4;  // can connect to the following letter
+const joinsRight = cp => FORMS[cp] && FORMS[cp].length >= 2;  // can connect to the preceding letter
+
+function shapeArabic(text) {
+  const cps = Array.from(text, c => c.codePointAt(0));
+  const neighbour = (i, step) => {
+    for (let j = i + step; j >= 0 && j < cps.length; j += step) {
+      if (!isTransparent(cps[j])) return j;
+    }
+    return -1;
+  };
+  const out = [];
+  for (let i = 0; i < cps.length; i++) {
+    const cp = cps[i];
+    if (!FORMS[cp]) { out.push(cp); continue; }
+    const p = neighbour(i, -1), n = neighbour(i, 1);
+    const fromPrev = p >= 0 && joinsLeft(cps[p]) && joinsRight(cp);
+    if (cp === 0x0644 && n >= 0 && LAM_ALEF[cps[n]]) {
+      out.push(LAM_ALEF[cps[n]][fromPrev ? 1 : 0]);
+      for (let k = i + 1; k < n; k++) out.push(cps[k]); // keep harakat on the lam
+      cps[n] = -1;                                     // alef consumed by the ligature
+      i = n;
+      continue;
+    }
+    const toNext = n >= 0 && joinsLeft(cp) && joinsRight(cps[n]);
+    const f = FORMS[cp];
+    let form = 0;
+    if (fromPrev && toNext) form = 3;
+    else if (fromPrev) form = 1;
+    else if (toNext) form = 2;
+    out.push(f[form] !== undefined ? f[form] : f[0]);
+  }
+  return String.fromCodePoint(...out.filter(c => c >= 0));
+}
+
+/* ======================================================================
+ * 3. Tokenizer + minimal bidi
+ *    Every Arabic word, Latin word, number and punctuation mark becomes a
+ *    separate token; whitespace becomes an explicit (undrawn) space token.
+ * ====================================================================== */
+const TOKEN_RE = new RegExp([
+  '(\\n)',                                                        // forced line break
+  '([\\s\\u00A0]+)',                                              // spaces
+  '([\\u0600-\\u065F\\u066E-\\u06D3\\u06D5-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF]+)', // Arabic
+  '([0-9\\u0660-\\u0669\\u06F0-\\u06F9]+(?:[.,:/\\-\\u066B\\u066C][0-9\\u0660-\\u0669\\u06F0-\\u06F9]+)*%?)', // numbers
+  "([\\p{L}\\p{M}][\\p{L}\\p{M}'’\\-]*)",                            // Latin & other LTR words
+  '([^])',                                                         // any single other character
+].join('|'), 'gu');
+
+const ARABIC_PUNCT = /^[،؛؟٪٭۔]$/;
+const MIRROR = { '(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{', '<': '>', '>': '<', '«': '»', '»': '«' };
+
+function tokenize(text, bold) {
+  const tokens = [];
+  text = text.replace(/[‎‏‪-‮⁦-⁩﻿]/g, '');
+  for (const m of text.matchAll(TOKEN_RE)) {
+    if (m[1]) tokens.push({ type: 'br' });
+    else if (m[2]) tokens.push({ type: 'space', bold });
+    else if (m[3]) {
+      if (ARABIC_PUNCT.test(m[3])) tokens.push({ type: 'punct', text: m[3], bold });
+      else {
+        // split off Arabic punctuation glued to the word so each mark is its own block
+        for (const part of m[3].split(/([،؛؟٪٭۔])/)) {
+          if (!part) continue;
+          tokens.push(ARABIC_PUNCT.test(part)
+            ? { type: 'punct', text: part, bold }
+            : { type: 'ar', text: part, bold });
+        }
+      }
+    }
+    else if (m[4]) tokens.push({ type: 'num', text: m[4], bold });
+    else if (m[5]) tokens.push({ type: 'ltr', text: m[5], bold });
+    else if (m[6]) tokens.push({ type: 'punct', text: m[6], bold });
+  }
+  return tokens;
+}
+
+const isLTR = t => t.type === 'num' || t.type === 'ltr';
+
+// Reorder one line (logical order) into visual order, right → left.
+function visualOrder(line) {
+  // Neutral tokens between two LTR tokens join the LTR run; otherwise they follow the RTL base.
+  const dir = line.map(isLTR);
+  for (let i = 0; i < line.length; i++) {
+    if (dir[i] || isLTR(line[i]) || line[i].type === 'ar') continue;
+    let a = i - 1; while (a >= 0 && !(isLTR(line[a]) || line[a].type === 'ar')) a--;
+    let b = i + 1; while (b < line.length && !(isLTR(line[b]) || line[b].type === 'ar')) b++;
+    dir[i] = a >= 0 && b < line.length && isLTR(line[a]) && isLTR(line[b]);
+  }
+  // Visual order from the right edge = logical order, except LTR runs are read backwards.
+  const out = [];
+  let i = 0;
+  while (i < line.length) {
+    if (!dir[i]) { out.push({ tok: line[i], rtl: true }); i++; continue; }
+    let j = i; while (j < line.length && dir[j]) j++;
+    for (let k = j - 1; k >= i; k--) out.push({ tok: line[k], rtl: false });
+    i = j;
+  }
+  return out;
+}
+
+/* ======================================================================
+ * 4. DOCX → blocks (paragraphs with styled runs)
+ * ====================================================================== */
+async function docxToBlocks(arrayBuffer) {
+  const { value: html, messages } = await mammoth.convertToHtml({ arrayBuffer });
+  messages.filter(m => m.type === 'warning').forEach(m => console.warn('mammoth:', m.message));
+  const root = new DOMParser().parseFromString('<div>' + html + '</div>', 'text/html').body.firstChild;
+  const blocks = [];
+  const HEADINGS = { H1: 1.6, H2: 1.4, H3: 1.25, H4: 1.15, H5: 1.1, H6: 1.05 };
+
+  function inlineRuns(node, bold, runs) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) runs.push({ text: child.nodeValue, bold });
+      else if (child.nodeName === 'BR') runs.push({ text: '\n', bold });
+      else if (child.nodeType === Node.ELEMENT_NODE && !['UL', 'OL', 'TABLE'].includes(child.nodeName)) {
+        inlineRuns(child, bold || child.nodeName === 'STRONG' || child.nodeName === 'B', runs);
+      }
+    }
+    return runs;
+  }
+
+  function walk(node, depth) {
+    for (const el of node.children) {
+      const tag = el.nodeName;
+      if (HEADINGS[tag]) {
+        blocks.push({ runs: inlineRuns(el, true, []), scale: HEADINGS[tag], indent: 0, heading: true });
+      } else if (tag === 'P') {
+        blocks.push({ runs: inlineRuns(el, false, []), scale: 1, indent: 0 });
+      } else if (tag === 'UL' || tag === 'OL') {
+        let n = 1;
+        for (const li of el.children) {
+          if (li.nodeName !== 'LI') continue;
+          const marker = tag === 'OL' ? (n++) + '.' : '•';
+          blocks.push({ runs: [{ text: marker + ' ', bold: false }, ...inlineRuns(li, false, [])], scale: 1, indent: depth + 1 });
+          for (const sub of li.children) if (sub.nodeName === 'UL' || sub.nodeName === 'OL') walk({ children: [sub] }, depth + 1);
+        }
+      } else if (tag === 'TABLE') {
+        for (const cell of el.querySelectorAll('td, th')) {
+          if (cell.querySelector('p')) walk(cell, depth); else blocks.push({ runs: inlineRuns(cell, false, []), scale: 1, indent: depth });
+        }
+      } else {
+        walk(el, depth);
+      }
+    }
+  }
+  walk(root, 0);
+  return blocks.filter(b => b.runs.some(r => r.text.trim()));
+}
+
+/* ======================================================================
+ * 5. PDF layout: every token is drawn with its own drawText() call
+ *    at absolute (x, y), starting from the right margin and moving left.
+ * ====================================================================== */
+const PAGE_SIZES = { A4: [595.28, 841.89], Letter: [612, 792] };
+
+async function buildPdf(blocks, opts, onProgress) {
+  const { PDFDocument, rgb } = PDFLib;
+  const pdf = await PDFDocument.create();
+  pdf.registerFontkit(fontkit);
+  pdf.setTitle(opts.title);
+  pdf.setLanguage('ar');
+
+  // subset:false is required — fontkit's subsetter drops Arabic glyphs.
+  // Shaping features are disabled because the text is already in presentation forms.
+  const noShaping = { init: false, medi: false, fina: false, isol: false, rlig: false, liga: false, calt: false };
+  const regular = await pdf.embedFont(opts.fontBytes.regular, { subset: false, features: noShaping });
+  const bold = opts.fontBytes.bold
+    ? await pdf.embedFont(opts.fontBytes.bold, { subset: false, features: noShaping })
+    : regular;
+  // A separate fontkit instance tells us whether pdf-lib will reverse a string as RTL.
+  const fkRegular = fontkit.create(new Uint8Array(opts.fontBytes.regular));
+
+  const [pageW, pageH] = PAGE_SIZES[opts.pageSize];
+  const margin = 56;
+  const baseSize = opts.fontSize;
+  const color = rgb(0.08, 0.08, 0.1);
+
+  let page = null, y = 0, drawn = 0;
+  const newPage = () => { page = pdf.addPage([pageW, pageH]); y = pageH - margin; };
+  newPage();
+
+  // Prepare a token for drawing: shape Arabic, mirror brackets, fix pdf-lib's RTL reversal.
+  function prepare(tok, size) {
+    if (tok.type === 'space' || tok.type === 'br') return tok;
+    const font = tok.bold ? bold : regular;
+    let s = tok.type === 'ar' ? shapeArabic(tok.text) : tok.text;
+    if (tok.type === 'punct' && tok.rtl && MIRROR[s]) s = MIRROR[s];
+    if (tok.type !== 'ar' && fkRegular.layout(s).direction === 'rtl') {
+      s = Array.from(s).reverse().join(''); // e.g. Arabic-Indic digits must stay left-to-right
+    }
+    tok.draw = s;
+    tok.font = font;
+    tok.width = font.widthOfTextAtSize(s, size);
+    return tok;
+  }
+
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const block = blocks[bi];
+    const size = baseSize * block.scale;
+    const lineH = size * opts.lineSpacing;
+    const spaceW = regular.widthOfTextAtSize(' ', size);
+    const indent = block.indent * size * 1.6;
+    const maxW = pageW - margin * 2 - indent;
+
+    // Tokenize all runs and split into lines (greedy, breaking only at spaces).
+    const tokens = block.runs.flatMap(r => tokenize(r.text, r.bold));
+    const words = []; // groups of non-space tokens with the spaces that follow them
+    let cur = { toks: [], trailing: 0, forceBreak: false };
+    for (const t of tokens) {
+      if (t.type === 'space') { if (cur.toks.length) cur.trailing = 1; }
+      else if (t.type === 'br') { cur.forceBreak = true; words.push(cur); cur = { toks: [], trailing: 0, forceBreak: false }; }
+      else {
+        if (cur.trailing) { words.push(cur); cur = { toks: [], trailing: 0, forceBreak: false }; }
+        cur.toks.push(t);
+      }
+    }
+    if (cur.toks.length || cur.forceBreak) words.push(cur);
+
+    // Resolve direction for punctuation (needed for bracket mirroring) per block.
+    const flat = words.flatMap(w => w.toks);
+    visualOrder(flat).forEach(v => { v.tok.rtl = v.rtl; });
+    flat.forEach(t => prepare(t, size));
+    words.forEach(w => { w.width = w.toks.reduce((a, t) => a + t.width, 0); });
+
+    const lines = [];
+    let line = [], lineW = 0;
+    for (const w of words) {
+      const add = (line.length ? spaceW : 0) + w.width;
+      if (line.length && lineW + add > maxW) { lines.push({ words: line, last: false }); line = []; lineW = 0; }
+      if (w.toks.length) { lineW += (line.length ? spaceW : 0) + w.width; line.push(w); }
+      if (w.forceBreak) { lines.push({ words: line, last: true }); line = []; lineW = 0; }
+    }
+    if (line.length) lines.push({ words: line, last: true });
+
+    for (const ln of lines) {
+      if (y - lineH < margin) newPage();
+      y -= lineH;
+      if (!ln.words.length) continue;
+
+      // Build the logical token sequence with explicit space tokens, then reorder visually.
+      const seq = [];
+      ln.words.forEach((w, i) => {
+        if (i) seq.push({ type: 'space', width: spaceW });
+        seq.push(...w.toks);
+      });
+      const textW = seq.reduce((a, t) => a + t.width, 0);
+      const gaps = ln.words.length - 1;
+      const extra = opts.align === 'justify' && !ln.last && gaps > 0 && !block.heading
+        ? (maxW - textW) / gaps : 0;
+
+      // Start at the right margin and walk leftward.
+      let currentX = pageW - margin - indent;
+      const baseline = y + lineH * 0.3;
+      for (const { tok } of visualOrder(seq)) {
+        if (tok.type === 'space') { currentX -= tok.width + extra; continue; }
+        currentX -= tok.width;
+        page.drawText(tok.draw, { x: currentX, y: baseline, size, font: tok.font, color });
+        drawn++;
+      }
+    }
+    y -= baseSize * (block.heading ? 0.6 : 0.4); // paragraph spacing
+
+    if (bi % 20 === 0) {
+      onProgress(bi / blocks.length);
+      await new Promise(r => setTimeout(r)); // keep the UI responsive
+    }
+  }
+
+  onProgress(1);
+  const bytes = await pdf.save();
+  return { bytes, pages: pdf.getPageCount(), drawn };
+}
+
+/* ======================================================================
+ * 6. UI wiring
+ * ====================================================================== */
+const $ = id => document.getElementById(id);
+let selectedFile = null, customFont = null, lastUrl = null;
+
+function setStatus(msg, pct, cls) {
+  $('status').textContent = msg;
+  $('status').className = cls || '';
+  if (pct !== undefined) $('bar').style.width = Math.round(pct * 100) + '%';
+}
+
+function pickFile(file) {
+  if (!file) return;
+  if (!/\.docx$/i.test(file.name)) { setStatus('الرجاء اختيار ملف بصيغة ‎.docx‎ فقط.', 0, 'err'); return; }
+  selectedFile = file;
+  $('fileName').textContent = file.name;
+  $('convert').disabled = false;
+  $('download').classList.add('hidden');
+  setStatus('الملف جاهز. اضغط "تحويل إلى PDF".', 0);
+}
+
+$('drop').addEventListener('click', () => $('fileInput').click());
+$('drop').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('fileInput').click(); } });
+$('fileInput').addEventListener('change', e => pickFile(e.target.files[0]));
+['dragenter', 'dragover'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => $('drop').addEventListener(ev, e => { e.preventDefault(); $('drop').classList.remove('over'); }));
+$('drop').addEventListener('drop', e => pickFile(e.dataTransfer.files[0]));
+$('fontInput').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  customFont = f ? await f.arrayBuffer() : null;
+});
+
+$('convert').addEventListener('click', async () => {
+  if (!selectedFile) return;
+  $('convert').disabled = true;
+  $('download').classList.add('hidden');
+  $('stats').textContent = '';
+  try {
+    setStatus('جارٍ تحميل المكتبات…', 0.05);
+    await Promise.all([loadLib('PDFLib'), loadLib('fontkit'), loadLib('mammoth')]);
+
+    setStatus('جارٍ تحميل الخط العربي…', 0.12);
+    let fontBytes;
+    if (customFont) fontBytes = { regular: customFont, bold: null };
+    else {
+      const [regular, bold] = await Promise.all([fetchFirst(FONT_SOURCES.regular), fetchFirst(FONT_SOURCES.bold)]);
+      if (!regular) throw new Error('تعذّر تحميل خط Amiri. اختر ملف خط ‎.ttf‎ من "خط مخصص".');
+      fontBytes = { regular, bold };
+    }
+
+    setStatus('جارٍ قراءة مستند Word…', 0.2);
+    const blocks = await docxToBlocks(await selectedFile.arrayBuffer());
+    if (!blocks.length) throw new Error('لم يُعثر على أي نص في المستند.');
+
+    setStatus('جارٍ رسم الكلمات في ملف PDF…', 0.25);
+    const result = await buildPdf(blocks, {
+      fontBytes,
+      fontSize: Math.min(32, Math.max(8, +$('fontSize').value || 14)),
+      lineSpacing: +$('lineSpacing').value,
+      align: $('align').value,
+      pageSize: $('pageSize').value,
+      title: selectedFile.name.replace(/\.docx$/i, ''),
+    }, p => setStatus('جارٍ رسم الكلمات في ملف PDF… ' + Math.round(p * 100) + '%', 0.25 + p * 0.7));
+
+    const blob = new Blob([result.bytes], { type: 'application/pdf' });
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = URL.createObjectURL(blob);
+    const name = selectedFile.name.replace(/\.docx$/i, '') + '.pdf';
+    $('download').href = lastUrl;
+    $('download').download = name;
+    $('download').classList.remove('hidden');
+    $('preview').src = lastUrl;
+    $('previewCard').classList.remove('hidden');
+    setStatus('تم إنشاء الملف بنجاح ✓', 1, 'ok');
+    $('stats').textContent = `عدد الصفحات: ${result.pages} — عدد الكتل النصية المرسومة: ${result.drawn.toLocaleString('ar')}`;
+  } catch (err) {
+    console.error(err);
+    setStatus('حدث خطأ: ' + err.message, 0, 'err');
+  } finally {
+    $('convert').disabled = false;
+  }
+});
+</script>
+</body>
+</html>
