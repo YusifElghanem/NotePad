@@ -15,6 +15,7 @@
     --accent-soft: #e8efff;
     --ok: #12805c;
     --err: #c0362c;
+    --warn: #a15c00;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -27,6 +28,7 @@
       --accent-soft: #1f2b45;
       --ok: #3ccf91;
       --err: #ff7b6e;
+      --warn: #f0b35a;
     }
   }
   * { box-sizing: border-box; }
@@ -67,12 +69,12 @@
   #fileName { margin-top: 8px; font-weight: 600; color: var(--accent); word-break: break-all; }
   .options {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 12px;
     margin-top: 16px;
   }
   label { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; color: var(--muted); }
-  select, input[type=number] {
+  select {
     font: inherit;
     color: var(--text);
     background: var(--bg);
@@ -103,6 +105,7 @@
   #status.ok { color: var(--ok); }
   #status.err { color: var(--err); }
   #stats { color: var(--muted); font-size: .85rem; margin-top: 4px; }
+  #warnings { color: var(--warn); font-size: .85rem; margin-top: 4px; }
   iframe { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
 </style>
 </head>
@@ -110,7 +113,7 @@
 <main>
   <header>
     <h1>محوّل مستندات Word العربية إلى PDF</h1>
-    <p>ارفع ملف ‎.docx‎ وسيتم إنشاء ملف PDF تُرسم فيه كل كلمة وعلامة ترقيم ككتلة نصية مستقلة بإحداثيات مطلقة.</p>
+    <p>ارفع ملف ‎.docx‎ وسيتم إنشاء ملف PDF بنفس تنسيق المستند، تُرسم فيه كل كلمة وعلامة ترقيم ككتلة نصية مستقلة بإحداثيات مطلقة.</p>
   </header>
 
   <section class="card">
@@ -122,33 +125,18 @@
     <input type="file" id="fileInput" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
 
     <div class="options">
-      <label>حجم الخط
-        <input type="number" id="fontSize" value="14" min="8" max="32" step="1">
-      </label>
-      <label>تباعد الأسطر
-        <select id="lineSpacing">
-          <option value="1.6">ضيّق</option>
-          <option value="1.9" selected>عادي</option>
-          <option value="2.3">واسع</option>
-        </select>
-      </label>
-      <label>المحاذاة
-        <select id="align">
-          <option value="justify" selected>ضبط (Justify)</option>
-          <option value="right">يمين</option>
-        </select>
-      </label>
-      <label>حجم الصفحة
-        <select id="pageSize">
-          <option value="A4" selected>A4</option>
-          <option value="Letter">Letter</option>
+      <label>الخط
+        <select id="fontChoice">
+          <option value="auto" selected>تلقائي حسب خط المستند</option>
+          <option value="serif">Amiri (نسخ)</option>
+          <option value="sans">IBM Plex Sans Arabic (بدون زوائد)</option>
         </select>
       </label>
     </div>
 
     <details>
       <summary>خط مخصص (اختياري)</summary>
-      <p>يُستخدم خط Amiri تلقائيًا. يمكنك بدلًا من ذلك اختيار ملف خط عربي ‎.ttf‎ أو ‎.otf‎ من جهازك.</p>
+      <p>يمكنك اختيار ملف خط عربي ‎.ttf‎ أو ‎.otf‎ من جهازك ليُستخدم لكل النص (مثلًا نفس الخط المستخدم في ملف Word).</p>
       <input type="file" id="fontInput" accept=".ttf,.otf">
     </details>
 
@@ -162,6 +150,7 @@
     <div class="progress"><div id="bar"></div></div>
     <div id="status">بانتظار اختيار ملف…</div>
     <div id="stats"></div>
+    <div id="warnings"></div>
   </section>
 
   <section class="card hidden" id="previewCard">
@@ -184,25 +173,24 @@ const LIBS = {
     'https://cdn.jsdelivr.net/npm/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
     'https://unpkg.com/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js',
   ],
-  mammoth: [
-    'https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js',
-    'https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js',
+  JSZip: [
+    'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+    'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js',
   ],
 };
 
-// Same-origin copy first (put the .ttf files in ./fonts/ next to this page),
-// then Google Fonts' GitHub repository (CORS-enabled), then its jsDelivr mirror.
+// Same-origin copy first (./fonts next to this page), then Google Fonts' GitHub repo, then its jsDelivr mirror.
+const fontUrls = (dir, file) => [
+  'fonts/' + file,
+  `https://raw.githubusercontent.com/google/fonts/main/ofl/${dir}/${file}`,
+  `https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/${dir}/${file}`,
+];
 const FONT_SOURCES = {
-  regular: [
-    'fonts/Amiri-Regular.ttf',
-    'https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Regular.ttf',
-    'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/amiri/Amiri-Regular.ttf',
-  ],
-  bold: [
-    'fonts/Amiri-Bold.ttf',
-    'https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Bold.ttf',
-    'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/amiri/Amiri-Bold.ttf',
-  ],
+  serif: { regular: fontUrls('amiri', 'Amiri-Regular.ttf'), bold: fontUrls('amiri', 'Amiri-Bold.ttf') },
+  sans: {
+    regular: fontUrls('ibmplexsansarabic', 'IBMPlexSansArabic-Regular.ttf'),
+    bold: fontUrls('ibmplexsansarabic', 'IBMPlexSansArabic-Bold.ttf'),
+  },
 };
 
 function loadScript(src) {
@@ -237,9 +225,10 @@ async function fetchFirst(urls) {
 }
 
 /* ======================================================================
- * 2. Arabic shaping → Presentation Forms
- *    pdf-lib's own shaping garbles Arabic, so each letter is converted to
- *    its contextual form (isolated / final / initial / medial) here.
+ * 2. Arabic helpers
+ *    Text is shaped with the font's own OpenType tables (via fontkit). The
+ *    presentation-form tables below are only a fallback for fonts without
+ *    OpenType Arabic support, and to map such glyphs back to real letters.
  * ====================================================================== */
 // code point → [isolated, final, initial, medial]; 2-entry arrays join on the right only.
 const FORMS = {
@@ -272,28 +261,30 @@ const isTransparent = cp => (cp >= 0x064B && cp <= 0x065F) || cp === 0x0670 ||
 const joinsLeft = cp => FORMS[cp] && FORMS[cp].length === 4;  // can connect to the following letter
 const joinsRight = cp => FORMS[cp] && FORMS[cp].length >= 2;  // can connect to the preceding letter
 
-function shapeArabic(text) {
+// prevCp / nextCp: letters of the neighbouring token when a word is split across Word runs.
+function shapeArabic(text, prevCp, nextCp) {
   const cps = Array.from(text, c => c.codePointAt(0));
+  const at = j => (j < 0 ? prevCp : j >= cps.length ? nextCp : cps[j]);
   const neighbour = (i, step) => {
-    for (let j = i + step; j >= 0 && j < cps.length; j += step) {
+    for (let j = i + step; j >= -1 && j <= cps.length; j += step) {
+      if (j === -1 || j === cps.length) return at(j) ? j : null;
       if (!isTransparent(cps[j])) return j;
     }
-    return -1;
+    return null;
   };
   const out = [];
   for (let i = 0; i < cps.length; i++) {
     const cp = cps[i];
     if (!FORMS[cp]) { out.push(cp); continue; }
     const p = neighbour(i, -1), n = neighbour(i, 1);
-    const fromPrev = p >= 0 && joinsLeft(cps[p]) && joinsRight(cp);
-    if (cp === 0x0644 && n >= 0 && LAM_ALEF[cps[n]]) {
+    const fromPrev = p !== null && joinsLeft(at(p)) && joinsRight(cp);
+    if (cp === 0x0644 && n !== null && n < cps.length && LAM_ALEF[cps[n]]) {
       out.push(LAM_ALEF[cps[n]][fromPrev ? 1 : 0]);
       for (let k = i + 1; k < n; k++) out.push(cps[k]); // keep harakat on the lam
-      cps[n] = -1;                                     // alef consumed by the ligature
-      i = n;
+      i = n;                                            // alef consumed by the ligature
       continue;
     }
-    const toNext = n >= 0 && joinsLeft(cp) && joinsRight(cps[n]);
+    const toNext = n !== null && joinsLeft(cp) && joinsRight(at(n));
     const f = FORMS[cp];
     let form = 0;
     if (fromPrev && toNext) form = 3;
@@ -301,16 +292,22 @@ function shapeArabic(text) {
     else if (toNext) form = 2;
     out.push(f[form] !== undefined ? f[form] : f[0]);
   }
-  return String.fromCodePoint(...out.filter(c => c >= 0));
+  return String.fromCodePoint(...out);
 }
 
+// presentation form → the real letter(s) it stands for (used for copy/paste text)
+const PRES_TO_BASE = new Map();
+for (const [base, forms] of Object.entries(FORMS)) for (const f of forms) if (f !== +base) PRES_TO_BASE.set(f, [+base]);
+for (const [alef, forms] of Object.entries(LAM_ALEF)) for (const f of forms) PRES_TO_BASE.set(f, [0x0644, +alef]);
+const ZW = new Set([0x200C, 0x200D]);
+const toLetters = cps => cps.flatMap(c => PRES_TO_BASE.get(c) || [c]).filter(c => !ZW.has(c));
+
 /* ======================================================================
- * 3. Tokenizer + minimal bidi
+ * 3. Tokenizer + bidi
  *    Every Arabic word, Latin word, number and punctuation mark becomes a
  *    separate token; whitespace becomes an explicit (undrawn) space token.
  * ====================================================================== */
 const TOKEN_RE = new RegExp([
-  '(\\n)',                                                        // forced line break
   '([\\s\\u00A0]+)',                                              // spaces
   '([\\u0600-\\u065F\\u066E-\\u06D3\\u06D5-\\u06FF\\u0750-\\u077F\\uFB50-\\uFDFF\\uFE70-\\uFEFF]+)', // Arabic
   '([0-9\\u0660-\\u0669\\u06F0-\\u06F9]+(?:[.,:/\\-\\u066B\\u066C][0-9\\u0660-\\u0669\\u06F0-\\u06F9]+)*%?)', // numbers
@@ -321,226 +318,1279 @@ const TOKEN_RE = new RegExp([
 const ARABIC_PUNCT = /^[،؛؟٪٭۔]$/;
 const MIRROR = { '(': ')', ')': '(', '[': ']', ']': '[', '{': '}', '}': '{', '<': '>', '>': '<', '«': '»', '»': '«' };
 
-function tokenize(text, bold) {
-  const tokens = [];
-  text = text.replace(/[‎‏‪-‮⁦-⁩﻿]/g, '');
+function tokenize(text, style, out) {
+  text = text.replace(/[‎‏‪-‮⁦-⁩﻿­]/g, '');
   for (const m of text.matchAll(TOKEN_RE)) {
-    if (m[1]) tokens.push({ type: 'br' });
-    else if (m[2]) tokens.push({ type: 'space', bold });
-    else if (m[3]) {
-      if (ARABIC_PUNCT.test(m[3])) tokens.push({ type: 'punct', text: m[3], bold });
-      else {
-        // split off Arabic punctuation glued to the word so each mark is its own block
-        for (const part of m[3].split(/([،؛؟٪٭۔])/)) {
-          if (!part) continue;
-          tokens.push(ARABIC_PUNCT.test(part)
-            ? { type: 'punct', text: part, bold }
-            : { type: 'ar', text: part, bold });
-        }
+    if (m[1]) out.push({ type: 'space', text: ' ', style });
+    else if (m[2]) {
+      // split off Arabic punctuation glued to the word so each mark is its own block
+      for (const part of m[2].split(/([،؛؟٪٭۔])/)) {
+        if (part) out.push({ type: ARABIC_PUNCT.test(part) ? 'punct' : 'ar', text: part, style });
       }
     }
-    else if (m[4]) tokens.push({ type: 'num', text: m[4], bold });
-    else if (m[5]) tokens.push({ type: 'ltr', text: m[5], bold });
-    else if (m[6]) tokens.push({ type: 'punct', text: m[6], bold });
+    else if (m[3]) out.push({ type: 'num', text: m[3], style });
+    else if (m[4]) out.push({ type: 'ltr', text: m[4], style });
+    else if (m[5]) out.push({ type: 'punct', text: m[5], style });
   }
-  return tokens;
+  return out;
 }
 
-const isLTR = t => t.type === 'num' || t.type === 'ltr';
-
-// Reorder one line (logical order) into visual order, right → left.
-function visualOrder(line) {
-  // Neutral tokens between two LTR tokens join the LTR run; otherwise they follow the RTL base.
-  const dir = line.map(isLTR);
-  for (let i = 0; i < line.length; i++) {
-    if (dir[i] || isLTR(line[i]) || line[i].type === 'ar') continue;
-    let a = i - 1; while (a >= 0 && !(isLTR(line[a]) || line[a].type === 'ar')) a--;
-    let b = i + 1; while (b < line.length && !(isLTR(line[b]) || line[b].type === 'ar')) b++;
-    dir[i] = a >= 0 && b < line.length && isLTR(line[a]) && isLTR(line[b]);
+// Simplified Unicode Bidi Algorithm for one line.
+// Returns tokens in visual order (left → right) and marks tokens at odd (RTL) levels.
+function bidiReorder(toks, rtl) {
+  const n = toks.length;
+  const base = rtl ? 'R' : 'L';
+  const t = toks.map(x => x.type === 'ar' ? 'R' : x.type === 'ltr' ? 'L' : x.type === 'num' ? 'EN' : 'N');
+  let last = base;
+  for (let i = 0; i < n; i++) {           // W7: numbers after Latin text behave as Latin
+    if (t[i] === 'L' || t[i] === 'R') last = t[i];
+    else if (t[i] === 'EN' && last === 'L') t[i] = 'L';
   }
-  // Visual order from the right edge = logical order, except LTR runs are read backwards.
-  const out = [];
-  let i = 0;
-  while (i < line.length) {
-    if (!dir[i]) { out.push({ tok: line[i], rtl: true }); i++; continue; }
-    let j = i; while (j < line.length && dir[j]) j++;
-    for (let k = j - 1; k >= i; k--) out.push({ tok: line[k], rtl: false });
+  const strong = k => t[k] === 'L' ? 'L' : (t[k] === 'R' || t[k] === 'EN') ? 'R' : null;
+  for (let i = 0; i < n;) {                // N1/N2: neutrals take surrounding direction
+    if (t[i] !== 'N') { i++; continue; }
+    let j = i; while (j < n && t[j] === 'N') j++;
+    const before = i > 0 ? strong(i - 1) : base;
+    const after = j < n ? strong(j) : base;
+    const dir = before === after ? before : base;
+    for (let k = i; k < j; k++) t[k] = dir;
     i = j;
+  }
+  const levels = t.map(x => rtl
+    ? (x === 'R' ? 1 : 2)
+    : (x === 'L' ? 0 : x === 'R' ? 1 : 2));
+  const order = toks.map((_, i) => i);
+  const max = Math.max(0, ...levels);
+  for (let lev = max; lev >= 1; lev--) {
+    for (let i = 0; i < n;) {
+      if (levels[order[i]] < lev) { i++; continue; }
+      let j = i; while (j < n && levels[order[j]] >= lev) j++;
+      const seg = order.slice(i, j).reverse();
+      order.splice(i, j - i, ...seg);
+      i = j;
+    }
+  }
+  return order.map(i => ({ tok: toks[i], odd: levels[i] % 2 === 1 }));
+}
+
+/* ======================================================================
+ * 4. DOCX parsing (direct OOXML, keeps the document's formatting)
+ * ====================================================================== */
+const W_NS = ['http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'http://purl.oclc.org/ooxml/wordprocessingml/main'];
+const R_NS = ['http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'http://purl.oclc.org/ooxml/officeDocument/relationships'];
+const TW = 20; // twips per point
+
+function A(el, name, nsList = W_NS) {
+  if (!el) return null;
+  for (const ns of nsList) {
+    const v = el.getAttributeNS(ns, name);
+    if (v !== null && v !== '') return v;
+  }
+  return null;
+}
+const kids = (el, name) => (el ? Array.from(el.children).filter(c => c.localName === name) : []);
+const kid = (el, name) => (el ? Array.from(el.children).find(c => c.localName === name) || null : null);
+const num = v => (v === null || v === undefined || v === '' || isNaN(+v) ? undefined : +v);
+function onOff(el) {
+  if (!el) return undefined;
+  const v = A(el, 'val');
+  return !(v === '0' || v === 'false' || v === 'off' || v === 'none');
+}
+const HIGHLIGHT = {
+  yellow: 'FFFF00', green: '00FF00', cyan: '00FFFF', magenta: 'FF00FF', blue: '0000FF', red: 'FF0000',
+  darkBlue: '000080', darkCyan: '008080', darkGreen: '008000', darkMagenta: '800080', darkRed: '800000',
+  darkYellow: '808000', darkGray: '808080', lightGray: 'C0C0C0', black: '000000', white: 'FFFFFF',
+};
+
+function parseXml(text) {
+  return new DOMParser().parseFromString(text, 'application/xml').documentElement;
+}
+
+async function readDocx(arrayBuffer) {
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const read = async path => {
+    const f = zip.file(path) || zip.file(path.replace(/^\//, ''));
+    return f ? parseXml(await f.async('string')) : null;
+  };
+  const docRoot = await read('word/document.xml');
+  if (!docRoot) throw new Error('الملف ليس مستند Word صالحًا.');
+
+  const theme = await read('word/theme/theme1.xml');
+  const themeFonts = {};
+  if (theme) {
+    for (const kind of ['major', 'minor']) {
+      const f = theme.getElementsByTagNameNS('*', kind + 'Font')[0];
+      if (!f) continue;
+      const latin = kid(f, 'latin'), cs = kid(f, 'cs');
+      const arab = kids(f, 'font').find(x => x.getAttribute('script') === 'Arab');
+      themeFonts[kind + 'Ascii'] = themeFonts[kind + 'HAnsi'] = latin && latin.getAttribute('typeface');
+      themeFonts[kind + 'Bidi'] = (cs && cs.getAttribute('typeface')) || (arab && arab.getAttribute('typeface')) || '';
+    }
+  }
+
+  const rels = {};
+  const relsRoot = await read('word/_rels/document.xml.rels');
+  if (relsRoot) for (const r of kids(relsRoot, 'Relationship')) rels[r.getAttribute('Id')] = r.getAttribute('Target');
+
+  const settings = await read('word/settings.xml');
+  const defTab = settings ? num(A(kid(settings, 'defaultTabStop'), 'val')) : undefined;
+
+  const ctx = {
+    themeFonts,
+    defaultTab: (defTab || 720) / TW,
+    styles: null,
+    numbering: null,
+    counters: {},
+    images: 0,
+  };
+  ctx.styles = parseStyles(await read('word/styles.xml'), ctx);
+  ctx.numbering = parseNumbering(await read('word/numbering.xml'), ctx);
+
+  // headers & footers referenced by section properties
+  const hf = {};
+  const loadHF = async rid => {
+    if (!rid || hf[rid] !== undefined) return;
+    const target = rels[rid];
+    const root = target && await read('word/' + target.replace(/^\/?word\//, ''));
+    hf[rid] = root ? parseBlocks(root, { ...ctx, inHF: true }, []) : null;
+  };
+
+  const body = kid(docRoot, 'body');
+  const flat = parseBlocks(body, ctx, []);
+  const finalSect = kid(body, 'sectPr');
+
+  // split into sections
+  const sections = [];
+  let blocks = [];
+  for (const b of flat) {
+    if (b.type === 'sectionEnd') { sections.push({ props: b.props, blocks }); blocks = []; }
+    else blocks.push(b);
+  }
+  sections.push({ props: parseSectPr(finalSect), blocks });
+  for (const s of sections) {
+    for (const rid of Object.values(s.props.headers).concat(Object.values(s.props.footers))) await loadHF(rid);
+  }
+  return { sections, hf, ctx };
+}
+
+function parseFonts(rf, ctx) {
+  if (!rf) return {};
+  const o = {};
+  const theme = n => (n ? ctx.themeFonts[n.replace(/^(major|minor)(Ascii|HAnsi|Bidi|EastAsia)$/, (m, a, b) => a + (b === 'EastAsia' ? 'Ascii' : b))] : null);
+  const ascii = theme(A(rf, 'asciiTheme')) || A(rf, 'ascii') || theme(A(rf, 'hAnsiTheme')) || A(rf, 'hAnsi');
+  const cs = theme(A(rf, 'cstheme')) || A(rf, 'cs');
+  if (ascii) o.fontAscii = ascii;
+  if (cs) o.fontCs = cs;
+  return o;
+}
+
+function parseRPr(rPr, ctx) {
+  const o = {};
+  if (!rPr) return o;
+  const g = n => kid(rPr, n);
+  let v;
+  if ((v = onOff(g('b'))) !== undefined) o.b = v;
+  if ((v = onOff(g('bCs'))) !== undefined) o.bCs = v;
+  if ((v = num(A(g('sz'), 'val'))) !== undefined) o.sz = v / 2;
+  if ((v = num(A(g('szCs'), 'val'))) !== undefined) o.szCs = v / 2;
+  const c = A(g('color'), 'val');
+  if (c) o.color = c === 'auto' ? null : c;
+  if (g('u')) o.u = A(g('u'), 'val') !== 'none';
+  if (g('vertAlign')) o.vert = A(g('vertAlign'), 'val');
+  if (g('highlight')) o.bg = HIGHLIGHT[A(g('highlight'), 'val')] || null;
+  const shd = A(g('shd'), 'fill');
+  if (shd && shd !== 'auto' && !o.bg) o.bg = shd;
+  if ((v = onOff(g('vanish'))) !== undefined) o.hidden = v;
+  if ((v = onOff(g('caps'))) !== undefined) o.caps = v;
+  if ((v = onOff(g('rtl'))) !== undefined) o.rtl = v;
+  if ((v = onOff(g('cs'))) !== undefined) o.cs = v;
+  if (g('rStyle')) o.rStyle = A(g('rStyle'), 'val');
+  Object.assign(o, parseFonts(g('rFonts'), ctx));
+  return o;
+}
+
+function parsePPr(pPr, ctx) {
+  const o = {};
+  if (!pPr) return o;
+  const g = n => kid(pPr, n);
+  let v;
+  if (g('pStyle')) o.pStyle = A(g('pStyle'), 'val');
+  if (g('jc')) o.jc = A(g('jc'), 'val');
+  if ((v = onOff(g('bidi'))) !== undefined) o.bidi = v;
+  const sp = g('spacing');
+  if (sp) {
+    if ((v = num(A(sp, 'before'))) !== undefined) o.before = v / TW;
+    if ((v = num(A(sp, 'after'))) !== undefined) o.after = v / TW;
+    if (A(sp, 'beforeAutospacing') && A(sp, 'beforeAutospacing') !== '0') o.before = 14;
+    if (A(sp, 'afterAutospacing') && A(sp, 'afterAutospacing') !== '0') o.after = 14;
+    if ((v = num(A(sp, 'line'))) !== undefined) { o.line = v; o.lineRule = A(sp, 'lineRule') || 'auto'; }
+  }
+  const ind = g('ind');
+  if (ind) {
+    if ((v = num(A(ind, 'start') ?? A(ind, 'left'))) !== undefined) o.indStart = v / TW;
+    if ((v = num(A(ind, 'end') ?? A(ind, 'right'))) !== undefined) o.indEnd = v / TW;
+    if ((v = num(A(ind, 'firstLine'))) !== undefined) { o.firstLine = v / TW; o.hanging = 0; }
+    if ((v = num(A(ind, 'hanging'))) !== undefined) { o.hanging = v / TW; o.firstLine = 0; }
+  }
+  const np = g('numPr');
+  if (np) {
+    o.numId = A(kid(np, 'numId'), 'val') ?? o.numId;
+    o.ilvl = num(A(kid(np, 'ilvl'), 'val')) ?? 0;
+  }
+  if ((v = onOff(g('pageBreakBefore'))) !== undefined) o.pageBreakBefore = v;
+  if ((v = onOff(g('contextualSpacing'))) !== undefined) o.contextual = v;
+  if ((v = onOff(g('keepNext'))) !== undefined) o.keepNext = v;
+  const tabs = g('tabs');
+  if (tabs) {
+    o.tabs = kids(tabs, 'tab')
+      .filter(t => A(t, 'val') !== 'clear')
+      .map(t => num(A(t, 'pos')) / TW)
+      .filter(x => x !== undefined && !isNaN(x));
+  }
+  const shd = A(g('shd'), 'fill');
+  if (shd && shd !== 'auto') o.shade = shd;
+  if (g('rPr')) o.markR = parseRPr(g('rPr'), ctx);
+  return o;
+}
+
+function parseBorder(el) {
+  if (!el) return undefined;
+  const val = A(el, 'val');
+  if (!val || val === 'nil' || val === 'none') return null;
+  const c = A(el, 'color');
+  return { w: Math.max((num(A(el, 'sz')) || 4) / 8, 0.25), color: !c || c === 'auto' ? '000000' : c };
+}
+function parseBorders(el) {
+  const o = {};
+  if (!el) return o;
+  for (const side of ['top', 'bottom', 'insideH', 'insideV']) {
+    const b = parseBorder(kid(el, side));
+    if (b !== undefined) o[side] = b;
+  }
+  const l = parseBorder(kid(el, 'left')) ?? parseBorder(kid(el, 'start'));
+  const r = parseBorder(kid(el, 'right')) ?? parseBorder(kid(el, 'end'));
+  if (l !== undefined) o.left = l;
+  if (r !== undefined) o.right = r;
+  return o;
+}
+function parseTblPr(tblPr) {
+  const o = {};
+  if (!tblPr) return o;
+  if (kid(tblPr, 'tblBorders')) o.borders = parseBorders(kid(tblPr, 'tblBorders'));
+  const mar = kid(tblPr, 'tblCellMar');
+  if (mar) {
+    const m = {};
+    for (const [k, names] of Object.entries({ top: ['top'], bottom: ['bottom'], left: ['left', 'start'], right: ['right', 'end'] })) {
+      for (const n of names) { const x = num(A(kid(mar, n), 'w')); if (x !== undefined) m[k] = x / TW; }
+    }
+    o.cellMar = m;
+  }
+  return o;
+}
+
+function parseStyles(root, ctx) {
+  const st = { para: {}, char: {}, table: {}, defP: {}, defR: { sz: 10, szCs: 10 }, defaultPara: null, cache: {} };
+  if (!root) return st;
+  const dd = kid(root, 'docDefaults');
+  if (dd) {
+    Object.assign(st.defR, parseRPr(kid(kid(dd, 'rPrDefault'), 'rPr'), ctx));
+    Object.assign(st.defP, parsePPr(kid(kid(dd, 'pPrDefault'), 'pPr'), ctx));
+  }
+  for (const s of kids(root, 'style')) {
+    const type = A(s, 'type'), id = A(s, 'styleId');
+    const entry = {
+      basedOn: A(kid(s, 'basedOn'), 'val'),
+      p: parsePPr(kid(s, 'pPr'), ctx),
+      r: parseRPr(kid(s, 'rPr'), ctx),
+      tbl: parseTblPr(kid(s, 'tblPr')),
+    };
+    if (type === 'paragraph') { st.para[id] = entry; if (A(s, 'default') === '1') st.defaultPara = id; }
+    else if (type === 'character') st.char[id] = entry;
+    else if (type === 'table') st.table[id] = entry;
+  }
+  return st;
+}
+
+function mergeP(...list) {
+  const o = {};
+  for (const p of list) {
+    if (!p) continue;
+    for (const [k, v] of Object.entries(p)) {
+      if (k === 'markR') o.markR = { ...(o.markR || {}), ...v };
+      else if (v !== undefined) o[k] = v;
+    }
+  }
+  return o;
+}
+const mergeR = (...list) => Object.assign({}, ...list.filter(Boolean));
+
+function resolveStyle(st, kind, id) {
+  const key = kind + ':' + id;
+  if (st.cache[key]) return st.cache[key];
+  const chain = [];
+  let cur = id, guard = 0;
+  while (cur && st[kind][cur] && guard++ < 30) { chain.unshift(st[kind][cur]); cur = st[kind][cur].basedOn; }
+  const res = {
+    p: mergeP(...chain.map(c => c.p)),
+    r: mergeR(...chain.map(c => c.r)),
+    tbl: chain.reduce((a, c) => ({
+      borders: { ...(a.borders || {}), ...(c.tbl.borders || {}) },
+      cellMar: { ...(a.cellMar || {}), ...(c.tbl.cellMar || {}) },
+    }), {}),
+  };
+  st.cache[key] = res;
+  return res;
+}
+
+function parseNumbering(root, ctx) {
+  const nb = { nums: {}, abs: {} };
+  if (!root) return nb;
+  for (const a of kids(root, 'abstractNum')) {
+    const lvls = {};
+    for (const l of kids(a, 'lvl')) {
+      lvls[A(l, 'ilvl')] = {
+        start: num(A(kid(l, 'start'), 'val')) ?? 1,
+        fmt: A(kid(l, 'numFmt'), 'val') || 'decimal',
+        text: A(kid(l, 'lvlText'), 'val') ?? '',
+        suff: A(kid(l, 'suff'), 'val') || 'tab',
+        p: parsePPr(kid(l, 'pPr'), ctx),
+        r: parseRPr(kid(l, 'rPr'), ctx),
+      };
+    }
+    nb.abs[A(a, 'abstractNumId')] = lvls;
+  }
+  for (const n of kids(root, 'num')) {
+    const overrides = {};
+    for (const o of kids(n, 'lvlOverride')) {
+      const s = num(A(kid(o, 'startOverride'), 'val'));
+      if (s !== undefined) overrides[A(o, 'ilvl')] = s;
+    }
+    nb.nums[A(n, 'numId')] = { abs: A(kid(n, 'abstractNumId'), 'val'), overrides };
+  }
+  return nb;
+}
+
+const ARABIC_ALPHA = 'أبتثجحخدذرزسشصضطظعغفقكلمنهوي';
+const ARABIC_ABJAD = 'أبجدهوزحطيكلمنسعفصقرشتثخذضظغ';
+function toRoman(n) {
+  const map = [[1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'], [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
+  let s = '';
+  for (const [v, r] of map) while (n >= v) { s += r; n -= v; }
+  return s;
+}
+function formatNumber(n, fmt) {
+  switch (fmt) {
+    case 'upperRoman': return toRoman(n).toUpperCase();
+    case 'lowerRoman': return toRoman(n);
+    case 'upperLetter': return String.fromCharCode(65 + ((n - 1) % 26)).repeat(Math.floor((n - 1) / 26) + 1);
+    case 'lowerLetter': return String.fromCharCode(97 + ((n - 1) % 26)).repeat(Math.floor((n - 1) / 26) + 1);
+    case 'arabicAlpha': return ARABIC_ALPHA[(n - 1) % ARABIC_ALPHA.length];
+    case 'arabicAbjad': return ARABIC_ABJAD[(n - 1) % ARABIC_ABJAD.length];
+    case 'hindiNumbers': case 'hindiCounting': return String(n).replace(/\d/g, d => String.fromCharCode(0x0660 + +d));
+    case 'decimalZero': return n < 10 ? '0' + n : String(n);
+    case 'none': return '';
+    default: return String(n);
+  }
+}
+// Symbol / Wingdings private-use bullets → real characters
+function mapBullet(text) {
+  return Array.from(text).map(ch => {
+    const cp = ch.codePointAt(0);
+    if (cp >= 0xF000 && cp <= 0xF0FF) {
+      const low = cp & 0xFF;
+      return { 0xB7: '•', 0xA7: '▪', 0x6E: '■', 0x71: '□', 0xD8: '•', 0x76: '•', 0xFC: '✓', 0x6F: '○' }[low] || '•';
+    }
+    if (ch === 'o') return '◦';
+    return ch;
+  }).join('');
+}
+
+function listMarker(props, ctx) {
+  const nb = ctx.numbering;
+  const n = nb.nums[props.numId];
+  if (!n || !nb.abs[n.abs]) return null;
+  const lvls = nb.abs[n.abs];
+  const lvl = lvls[props.ilvl] || lvls[0];
+  if (!lvl) return null;
+  const hasOverride = Object.keys(n.overrides).length > 0;
+  const key = hasOverride ? 'n' + props.numId : 'a' + n.abs;
+  const counters = ctx.counters[key] || (ctx.counters[key] = []);
+  const startOf = i => n.overrides[i] ?? (lvls[i] ? lvls[i].start : 1);
+  counters[props.ilvl] = counters[props.ilvl] === undefined ? startOf(props.ilvl) : counters[props.ilvl] + 1;
+  counters.length = props.ilvl + 1; // reset deeper levels
+  let text;
+  if (lvl.fmt === 'bullet') text = mapBullet(lvl.text);
+  else {
+    text = lvl.text.replace(/%(\d)/g, (m, d) => {
+      const i = +d - 1;
+      const v = counters[i] ?? startOf(i);
+      return formatNumber(v, (lvls[i] || lvl).fmt);
+    });
+  }
+  return { text, lvl };
+}
+
+function parseSectPr(sp) {
+  const p = {
+    w: 595.28, h: 841.89, mt: 72, mb: 72, ml: 72, mr: 72, header: 36, footer: 36,
+    headers: {}, footers: {}, titlePg: false, pgStart: undefined, type: 'nextPage',
+  };
+  if (!sp) return p;
+  const sz = kid(sp, 'pgSz');
+  if (sz) { p.w = (num(A(sz, 'w')) || 11906) / TW; p.h = (num(A(sz, 'h')) || 16838) / TW; }
+  const m = kid(sp, 'pgMar');
+  if (m) {
+    const g = (k, d) => { const v = num(A(m, k)); return v === undefined ? d : Math.abs(v) / TW; };
+    p.mt = g('top', 72); p.mb = g('bottom', 72); p.ml = g('left', 72) + g('gutter', 0); p.mr = g('right', 72);
+    p.header = g('header', 36); p.footer = g('footer', 36);
+  }
+  for (const r of kids(sp, 'headerReference')) p.headers[A(r, 'type') || 'default'] = A(r, 'id', R_NS);
+  for (const r of kids(sp, 'footerReference')) p.footers[A(r, 'type') || 'default'] = A(r, 'id', R_NS);
+  p.titlePg = !!onOff(kid(sp, 'titlePg'));
+  p.pgStart = num(A(kid(sp, 'pgNumType'), 'start'));
+  p.type = A(kid(sp, 'type'), 'val') || 'nextPage';
+  return p;
+}
+
+function parseBlocks(container, ctx, out) {
+  for (const el of container.children) {
+    switch (el.localName) {
+      case 'p': parseParagraph(el, ctx, out); break;
+      case 'tbl': out.push(parseTable(el, ctx)); break;
+      case 'sdt': { const c = kid(el, 'sdtContent'); if (c) parseBlocks(c, ctx, out); break; }
+      case 'customXml': case 'ins': case 'moveTo': parseBlocks(el, ctx, out); break;
+      case 'AlternateContent': { const c = kid(el, 'Choice') || kid(el, 'Fallback'); if (c) parseBlocks(c, ctx, out); break; }
+      default: break;
+    }
+  }
+  return out;
+}
+
+function parseParagraph(pEl, ctx, out) {
+  const st = ctx.styles;
+  const direct = parsePPr(kid(pEl, 'pPr'), ctx);
+  const styleId = direct.pStyle || st.defaultPara;
+  const ps = styleId ? resolveStyle(st, 'para', styleId) : { p: {}, r: {} };
+  const tbl = ctx.tableStyle;
+  const isDefault = styleId === st.defaultPara;
+  // table style formatting overrides the default paragraph style, but not explicit styles
+  const pChain = isDefault ? [st.defP, ps.p, tbl && tbl.p] : [st.defP, tbl && tbl.p, ps.p];
+  const rChain = isDefault ? [st.defR, ps.r, tbl && tbl.r] : [st.defR, tbl && tbl.r, ps.r];
+
+  let props = mergeP(...pChain, direct);
+  let marker = null;
+  if (props.numId && props.numId !== '0') {
+    marker = listMarker(props, ctx);
+    if (marker) props = mergeP(...pChain, marker.lvl.p, direct);
+  }
+  const runBase = mergeR(...rChain);
+  const markR = mergeR(runBase, props.markR);
+
+  const inlines = [], floating = [];
+  if (marker && marker.text) {
+    inlines.push({ type: 'text', text: marker.text, style: mergeR(markR, marker.lvl.r) });
+    if (marker.lvl.suff === 'tab') inlines.push({ type: 'tab', style: markR });
+    else if (marker.lvl.suff === 'space') inlines.push({ type: 'text', text: ' ', style: markR });
+  }
+  walkInlines(pEl, runBase, ctx, inlines, floating, { stack: [] });
+
+  // split at hard page breaks
+  const segments = [[]];
+  for (const it of inlines) {
+    if (it.type === 'pagebreak') segments.push([]);
+    else segments[segments.length - 1].push(it);
+  }
+  if (props.pageBreakBefore) out.push({ type: 'pagebreak' });
+  segments.forEach((seg, i) => {
+    const first = i === 0, last = i === segments.length - 1;
+    if (!last && !seg.length) { out.push({ type: 'pagebreak' }); return; }
+    const segProps = { ...props };
+    if (!first) { segProps.before = 0; segProps.firstLine = 0; segProps.hanging = 0; }
+    if (!last) segProps.after = 0;
+    out.push({ type: 'p', props: segProps, styleId, inlines: mergeInlines(seg), markR });
+    if (!last) out.push({ type: 'pagebreak' });
+  });
+  out.push(...floating);
+  const sp = kid(kid(pEl, 'pPr'), 'sectPr');
+  if (sp && !ctx.inTable && !ctx.inHF) out.push({ type: 'sectionEnd', props: parseSectPr(sp) });
+}
+
+// Word often splits one word over several runs (spell-check, revision ids); join identical-style runs.
+function mergeInlines(list) {
+  const out = [];
+  for (const it of list) {
+    const prev = out[out.length - 1];
+    if (it.type === 'text' && prev && prev.type === 'text' && JSON.stringify(prev.style) === JSON.stringify(it.style)) {
+      prev.text += it.text;
+    } else out.push(it.type === 'text' ? { ...it } : it);
+  }
+  return out;
+}
+
+function walkInlines(el, runBase, ctx, out, floating, fld) {
+  for (const c of el.children) {
+    switch (c.localName) {
+      case 'r': handleRun(c, runBase, ctx, out, floating, fld); break;
+      case 'hyperlink': case 'smartTag': case 'ins': case 'moveTo': case 'customXml': case 'bdo': case 'dir':
+        walkInlines(c, runBase, ctx, out, floating, fld); break;
+      case 'sdt': { const s = kid(c, 'sdtContent'); if (s) walkInlines(s, runBase, ctx, out, floating, fld); break; }
+      case 'fldSimple': {
+        const instr = (A(c, 'instr') || '').trim().split(/\s+/)[0].toUpperCase();
+        if (ctx.inHF && (instr === 'PAGE' || instr === 'NUMPAGES')) {
+          const r = kid(c, 'r');
+          out.push({ type: 'field', name: instr, style: mergeR(runBase, runStyle(r, ctx)) });
+        } else walkInlines(c, runBase, ctx, out, floating, fld);
+        break;
+      }
+      case 'AlternateContent': { const s = kid(c, 'Choice') || kid(c, 'Fallback'); if (s) walkInlines(s, runBase, ctx, out, floating, fld); break; }
+      case 'oMath': case 'oMathPara': {
+        const text = Array.from(c.getElementsByTagNameNS('*', 't')).map(t => t.textContent).join('');
+        if (text) out.push({ type: 'text', text, style: runBase });
+        break;
+      }
+      default: break;
+    }
+  }
+}
+
+function runStyle(r, ctx) {
+  const d = parseRPr(kid(r, 'rPr'), ctx);
+  const cs = d.rStyle ? resolveStyle(ctx.styles, 'char', d.rStyle).r : {};
+  const o = mergeR(cs, d);
+  delete o.rStyle;
+  return o;
+}
+
+function handleRun(r, runBase, ctx, out, floating, fld) {
+  const style = mergeR(runBase, runStyle(r, ctx));
+  if (style.hidden) return;
+  const top = () => fld.stack[fld.stack.length - 1];
+  const skipping = () => fld.stack.some(f => f.skip);
+  for (const c of r.children) {
+    switch (c.localName) {
+      case 'fldChar': {
+        const t = A(c, 'fldCharType');
+        if (t === 'begin') fld.stack.push({ instr: '', skip: false });
+        else if (t === 'separate' && top()) {
+          const name = top().instr.trim().split(/\s+/)[0].toUpperCase();
+          if (ctx.inHF && (name === 'PAGE' || name === 'NUMPAGES')) {
+            out.push({ type: 'field', name, style });
+            top().skip = true;
+          }
+        } else if (t === 'end') fld.stack.pop();
+        break;
+      }
+      case 'instrText': if (top()) top().instr += c.textContent; break;
+      case 't': if (!skipping()) out.push({ type: 'text', text: c.textContent, style }); break;
+      case 'tab': case 'ptab': if (!skipping()) out.push({ type: 'tab', style }); break;
+      case 'br': case 'cr':
+        if (skipping()) break;
+        out.push(A(c, 'type') === 'page' ? { type: 'pagebreak' } : { type: 'br', style });
+        break;
+      case 'noBreakHyphen': out.push({ type: 'text', text: '-', style }); break;
+      case 'sym': {
+        const ch = parseInt(A(c, 'char') || '', 16);
+        if (!isNaN(ch)) out.push({ type: 'text', text: mapBullet(String.fromCharCode(ch)), style });
+        break;
+      }
+      case 'drawing': case 'pict': case 'object': case 'AlternateContent': {
+        const boxes = Array.from(c.getElementsByTagNameNS('*', 'txbxContent'))
+          .filter(b => !hasAncestor(b, 'Fallback', c));
+        if (boxes.length) for (const b of boxes) parseBlocks(b, ctx, floating);
+        else if (c.localName !== 'AlternateContent' || c.getElementsByTagNameNS('*', 'blip').length) ctx.images++;
+        break;
+      }
+      default: break;
+    }
+  }
+}
+function hasAncestor(el, localName, stop) {
+  for (let p = el.parentElement; p && p !== stop; p = p.parentElement) if (p.localName === localName) return true;
+  return false;
+}
+
+function parseTable(tbl, ctx) {
+  const tblPr = kid(tbl, 'tblPr');
+  const styleId = A(kid(tblPr, 'tblStyle'), 'val');
+  const ts = styleId ? resolveStyle(ctx.styles, 'table', styleId) : { p: {}, r: {}, tbl: {} };
+  const direct = parseTblPr(tblPr);
+  const t = {
+    type: 'table',
+    rtl: !!onOff(kid(tblPr, 'bidiVisual')),
+    jc: A(kid(tblPr, 'jc'), 'val'),
+    ind: (num(A(kid(tblPr, 'tblInd'), 'w')) || 0) / TW,
+    borders: { ...(ts.tbl.borders || {}), ...(direct.borders || {}) },
+    cellMar: { top: 0, bottom: 0, left: 5.4, right: 5.4, ...(ts.tbl.cellMar || {}), ...(direct.cellMar || {}) },
+    grid: kids(kid(tbl, 'tblGrid'), 'gridCol').map(g => (num(A(g, 'w')) || 0) / TW),
+    rows: [],
+  };
+  const cellCtx = { ...ctx, inTable: true, tableStyle: ts };
+  const rowEls = [];
+  const collectRows = el => {
+    for (const c of el.children) {
+      if (c.localName === 'tr') rowEls.push(c);
+      else if (c.localName === 'sdt') collectRows(kid(c, 'sdtContent') || c);
+      else if (c.localName === 'customXml') collectRows(c);
+    }
+  };
+  collectRows(tbl);
+  for (const tr of rowEls) {
+    const trPr = kid(tr, 'trPr');
+    const hEl = kid(trPr, 'trHeight');
+    const row = {
+      height: (num(A(hEl, 'val')) || 0) / TW,
+      hRule: A(hEl, 'hRule') || 'atLeast',
+      gridBefore: num(A(kid(trPr, 'gridBefore'), 'val')) || 0,
+      cells: [],
+    };
+    const cellEls = [];
+    const collectCells = el => {
+      for (const c of el.children) {
+        if (c.localName === 'tc') cellEls.push(c);
+        else if (c.localName === 'sdt') collectCells(kid(c, 'sdtContent') || c);
+        else if (c.localName === 'customXml') collectCells(c);
+      }
+    };
+    collectCells(tr);
+    for (const tc of cellEls) {
+      const tcPr = kid(tc, 'tcPr');
+      const vm = kid(tcPr, 'vMerge');
+      const shd = A(kid(tcPr, 'shd'), 'fill');
+      const blocks = [];
+      parseBlocks(tc, cellCtx, blocks);
+      row.cells.push({
+        span: num(A(kid(tcPr, 'gridSpan'), 'val')) || 1,
+        vMerge: vm ? (A(vm, 'val') === 'restart' ? 'restart' : 'continue') : null,
+        borders: parseBorders(kid(tcPr, 'tcBorders')),
+        fill: shd && shd !== 'auto' ? shd : null,
+        vAlign: A(kid(tcPr, 'vAlign'), 'val') || 'top',
+        blocks: flattenCellBlocks(blocks),
+      });
+    }
+    t.rows.push(row);
+  }
+  return t;
+}
+// nested tables are rendered as their cells' paragraphs, one after another
+function flattenCellBlocks(blocks) {
+  const out = [];
+  for (const b of blocks) {
+    if (b.type === 'table') for (const r of b.rows) for (const c of r.cells) out.push(...c.blocks);
+    else if (b.type === 'p') out.push(b);
   }
   return out;
 }
 
 /* ======================================================================
- * 4. DOCX → blocks (paragraphs with styled runs)
+ * 5. Layout + drawing
+ *    Every token is drawn with its own drawText() call at absolute (x, y).
  * ====================================================================== */
-async function docxToBlocks(arrayBuffer) {
-  const { value: html, messages } = await mammoth.convertToHtml({ arrayBuffer });
-  messages.filter(m => m.type === 'warning').forEach(m => console.warn('mammoth:', m.message));
-  const root = new DOMParser().parseFromString('<div>' + html + '</div>', 'text/html').body.firstChild;
-  const blocks = [];
-  const HEADINGS = { H1: 1.6, H2: 1.4, H3: 1.25, H4: 1.15, H5: 1.1, H6: 1.05 };
-
-  function inlineRuns(node, bold, runs) {
-    for (const child of node.childNodes) {
-      if (child.nodeType === Node.TEXT_NODE) runs.push({ text: child.nodeValue, bold });
-      else if (child.nodeName === 'BR') runs.push({ text: '\n', bold });
-      else if (child.nodeType === Node.ELEMENT_NODE && !['UL', 'OL', 'TABLE'].includes(child.nodeName)) {
-        inlineRuns(child, bold || child.nodeName === 'STRONG' || child.nodeName === 'B', runs);
-      }
-    }
-    return runs;
-  }
-
-  function walk(node, depth) {
-    for (const el of node.children) {
-      const tag = el.nodeName;
-      if (HEADINGS[tag]) {
-        blocks.push({ runs: inlineRuns(el, true, []), scale: HEADINGS[tag], indent: 0, heading: true });
-      } else if (tag === 'P') {
-        blocks.push({ runs: inlineRuns(el, false, []), scale: 1, indent: 0 });
-      } else if (tag === 'UL' || tag === 'OL') {
-        let n = 1;
-        for (const li of el.children) {
-          if (li.nodeName !== 'LI') continue;
-          const marker = tag === 'OL' ? (n++) + '.' : '•';
-          blocks.push({ runs: [{ text: marker + ' ', bold: false }, ...inlineRuns(li, false, [])], scale: 1, indent: depth + 1 });
-          for (const sub of li.children) if (sub.nodeName === 'UL' || sub.nodeName === 'OL') walk({ children: [sub] }, depth + 1);
-        }
-      } else if (tag === 'TABLE') {
-        for (const cell of el.querySelectorAll('td, th')) {
-          if (cell.querySelector('p')) walk(cell, depth); else blocks.push({ runs: inlineRuns(cell, false, []), scale: 1, indent: depth });
-        }
-      } else {
-        walk(el, depth);
-      }
-    }
-  }
-  walk(root, 0);
-  return blocks.filter(b => b.runs.some(r => r.text.trim()));
+const SANS_RE = /arial|tahoma|calibri|segoe|sans|helvetica|verdana|cairo|tajawal|dubai|almarai|plex|kufi|geeza|frutiger|aptos|candara|corbel|trebuchet|lucida|droid|roboto|open/i;
+const LINE_RATIO = [
+  [/simplified arabic/i, 1.5], [/traditional arabic/i, 1.45], [/sakkal|majalla/i, 1.35],
+  [/arabic typesetting/i, 1.25], [/andalus/i, 1.4], [/mohanad|lotus|badr|mitra|nazanin|yagut|zar/i, 1.45],
+  [/tahoma/i, 1.21], [/segoe/i, 1.33], [/calibri|aptos/i, 1.22],
+];
+function lineRatio(name) {
+  const hit = name && LINE_RATIO.find(([re]) => re.test(name));
+  return Math.max(hit ? hit[1] : 1.17, 1.25);
 }
 
-/* ======================================================================
- * 5. PDF layout: every token is drawn with its own drawText() call
- *    at absolute (x, y), starting from the right margin and moving left.
- * ====================================================================== */
-const PAGE_SIZES = { A4: [595.28, 841.89], Letter: [612, 792] };
-
-async function buildPdf(blocks, opts, onProgress) {
-  const { PDFDocument, rgb } = PDFLib;
+async function buildPdf(docx, opts, onProgress) {
+  const {
+    PDFDocument, PDFHexString, PDFOperator, rgb, TextRenderingMode,
+    pushGraphicsState, popGraphicsState, beginText, endText, setFillingColor, setFontAndSize, setTextMatrix,
+    setTextRenderingMode,
+  } = PDFLib;
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   pdf.setTitle(opts.title);
   pdf.setLanguage('ar');
 
-  // subset:false is required — fontkit's subsetter drops Arabic glyphs.
-  // Shaping features are disabled because the text is already in presentation forms.
-  const noShaping = { init: false, medi: false, fina: false, isol: false, rlig: false, liga: false, calt: false };
-  const regular = await pdf.embedFont(opts.fontBytes.regular, { subset: false, features: noShaping });
-  const bold = opts.fontBytes.bold
-    ? await pdf.embedFont(opts.fontBytes.bold, { subset: false, features: noShaping })
-    : regular;
-  // A separate fontkit instance tells us whether pdf-lib will reverse a string as RTL.
-  const fkRegular = fontkit.create(new Uint8Array(opts.fontBytes.regular));
-
-  const [pageW, pageH] = PAGE_SIZES[opts.pageSize];
-  const margin = 56;
-  const baseSize = opts.fontSize;
-  const color = rgb(0.08, 0.08, 0.1);
-
-  let page = null, y = 0, drawn = 0;
-  const newPage = () => { page = pdf.addPage([pageW, pageH]); y = pageH - margin; };
-  newPage();
-
-  // Prepare a token for drawing: shape Arabic, mirror brackets, fix pdf-lib's RTL reversal.
-  function prepare(tok, size) {
-    if (tok.type === 'space' || tok.type === 'br') return tok;
-    const font = tok.bold ? bold : regular;
-    let s = tok.type === 'ar' ? shapeArabic(tok.text) : tok.text;
-    if (tok.type === 'punct' && tok.rtl && MIRROR[s]) s = MIRROR[s];
-    if (tok.type !== 'ar' && fkRegular.layout(s).direction === 'rtl') {
-      s = Array.from(s).reverse().join(''); // e.g. Arabic-Indic digits must stay left-to-right
+  // ---- fonts (embedded whole: fontkit's subsetter drops Arabic glyphs) ----
+  const embedded = {};
+  async function embed(bytes) {
+    const f = await pdf.embedFont(bytes, { subset: false });
+    f.usedGlyphs = new Map(); // glyph id → { id, codePoints, advanceWidth } for widths + ToUnicode
+    f.widthBoost = new Map();
+    f.hiddenLetters = new Map(); // letter → spare glyph id
+    return f;
+  }
+  const fontCache = {};
+  async function getFamily(fam) {
+    if (fontCache[fam]) return fontCache[fam];
+    let regular, bold;
+    if (opts.customFont) {
+      regular = embedded.custom || (embedded.custom = await embed(opts.customFont));
+      bold = regular;
+    } else {
+      const [r, b] = await Promise.all([fetchFirst(FONT_SOURCES[fam].regular), fetchFirst(FONT_SOURCES[fam].bold)]);
+      if (!r) {
+        if (fam !== 'serif') return (fontCache[fam] = await getFamily('serif'));
+        throw new Error('تعذّر تحميل الخط العربي. اختر ملف خط ‎.ttf‎ من "خط مخصص".');
+      }
+      regular = await embed(r);
+      bold = b ? await embed(b) : regular;
     }
-    tok.draw = s;
-    tok.font = font;
-    tok.width = font.widthOfTextAtSize(s, size);
-    return tok;
+    return (fontCache[fam] = { regular, bold });
+  }
+  const familyOf = name => opts.fontChoice !== 'auto' ? opts.fontChoice : (name && SANS_RE.test(name) ? 'sans' : 'serif');
+  // pre-load the families the document uses
+  const famNeeded = new Set(['serif']);
+  const scanStyles = blocks => {
+    for (const b of blocks) {
+      if (b.type === 'p') for (const it of b.inlines) { famNeeded.add(familyOf(it.style && it.style.fontCs)); famNeeded.add(familyOf(it.style && it.style.fontAscii)); }
+      if (b.type === 'table') for (const r of b.rows) for (const c of r.cells) scanStyles(c.blocks);
+    }
+  };
+  docx.sections.forEach(s => scanStyles(s.blocks));
+  Object.values(docx.hf).forEach(b => b && scanStyles(b));
+  if (opts.fontChoice !== 'auto') { famNeeded.clear(); famNeeded.add(opts.fontChoice); }
+  for (const fam of famNeeded) await getFamily(fam);
+  if (!fontCache.serif) fontCache.serif = fontCache[[...famNeeded][0]];
+
+  // Shape a string with the font's OpenType tables. Returns glyphs in visual order (left → right)
+  // with positions in em units (GPOS offsets included, so harakat sit on their letters).
+  const shapeCache = new Map();
+  function shapeRun(font, text, rtl) {
+    const key = font.name + (rtl ? '\u0001' : '\u0002') + text;
+    if (shapeCache.has(key)) return shapeCache.get(key);
+    const fk = font.embedder.font;
+    let src = text;
+    if (rtl && !fk.GSUB) {
+      // no OpenType Arabic support in this font: fall back to presentation forms
+      const core = text.replace(/[\u200C\u200D]/g, '');
+      src = shapeArabic(core, text.startsWith('\u200D') ? 0x0628 : null, text.endsWith('\u200D') ? 0x0628 : null);
+    }
+    const run = fk.layout(src, rtl ? { kern: false } : { liga: false, kern: false }, undefined, undefined, rtl ? 'rtl' : 'ltr');
+    const upm = fk.unitsPerEm;
+    const glyphs = [];
+    let pen = 0;
+    run.glyphs.forEach((g, i) => {
+      const pos = run.positions[i];
+      if (g.codePoints.length && g.codePoints.every(c => ZW.has(c))) return; // joiners are not drawn
+      glyphs.push({
+        id: g.id, advanceWidth: g.advanceWidth, cps: toLetters(g.codePoints),
+        x: (pen + pos.xOffset) / upm, y: pos.yOffset / upm,
+      });
+      pen += pos.xAdvance;
+    });
+    const res = { glyphs, width: pen / upm, rtl };
+    shapeCache.set(key, res);
+    return res;
+  }
+  const hex = h => {
+    const v = parseInt(h, 16);
+    return isNaN(v) ? rgb(0, 0, 0) : rgb(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255);
+  };
+
+  // Resolve the visual style of one token (complex-script props for Arabic, like Word does).
+  function tokenStyle(tok) {
+    const s = tok.style || {};
+    const cs = tok.type === 'ar' || s.rtl || s.cs;
+    const fontName = cs ? (s.fontCs || s.fontAscii) : (s.fontAscii || s.fontCs);
+    let size = (cs ? (s.szCs ?? s.sz) : (s.sz ?? s.szCs)) || 10;
+    const bold = cs ? (s.bCs ?? s.b) : s.b;
+    const fam = fontCache[familyOf(fontName)] || fontCache.serif;
+    let rise = 0;
+    if (s.vert === 'superscript') { rise = size * 0.33; size *= 0.65; }
+    else if (s.vert === 'subscript') { rise = -size * 0.14; size *= 0.65; }
+    return { font: bold ? fam.bold : fam.regular, size, fontName, rise };
   }
 
-  for (let bi = 0; bi < blocks.length; bi++) {
-    const block = blocks[bi];
-    const size = baseSize * block.scale;
-    const lineH = size * opts.lineSpacing;
-    const spaceW = regular.widthOfTextAtSize(' ', size);
-    const indent = block.indent * size * 1.6;
-    const maxW = pageW - margin * 2 - indent;
+  // Shape / mirror / measure a token for drawing.
+  function prepare(tok, odd, prevTok, nextTok) {
+    const ts = tokenStyle(tok);
+    Object.assign(tok, ts);
+    let s = tok.text;
+    if (tok.style && tok.style.caps) s = s.toUpperCase();
+    if (tok.type === 'ar') {
+      // a word split over differently formatted runs keeps its letters joined (zero-width joiner)
+      if (prevTok && prevTok.type === 'ar') s = '\u200D' + s;
+      if (nextTok && nextTok.type === 'ar') s += '\u200D';
+    } else if (tok.type === 'punct' && odd && MIRROR[s]) s = MIRROR[s];
+    tok.run = shapeRun(tok.font, s, tok.type === 'ar');
+    tok.width = tok.run.width * tok.size;
+  }
 
-    // Tokenize all runs and split into lines (greedy, breaking only at spaces).
-    const tokens = block.runs.flatMap(r => tokenize(r.text, r.bold));
-    const words = []; // groups of non-space tokens with the spaces that follow them
-    let cur = { toks: [], trailing: 0, forceBreak: false };
-    for (const t of tokens) {
-      if (t.type === 'space') { if (cur.toks.length) cur.trailing = 1; }
-      else if (t.type === 'br') { cur.forceBreak = true; words.push(cur); cur = { toks: [], trailing: 0, forceBreak: false }; }
+  // ---- paragraph layout → list of vertical entries (gaps and lines) ----
+  function layoutParagraph(p, boxW, fieldValues) {
+    const pr = p.props;
+    const rtl = !!pr.bidi;
+    const toks = [];
+    for (const it of p.inlines) {
+      if (it.type === 'text') tokenize(it.text, it.style, toks);
+      else if (it.type === 'tab') toks.push({ type: 'tab', text: '', style: it.style });
+      else if (it.type === 'br') toks.push({ type: 'br', text: '', style: it.style });
+      else if (it.type === 'field') tokenize(String(fieldValues ? fieldValues[it.name] : ''), it.style, toks);
+    }
+    // direction for mirroring is resolved on the whole paragraph
+    const drawable = toks.filter(t => t.type !== 'tab' && t.type !== 'br');
+    const oddSet = new Set(bidiReorder(drawable, rtl).filter(v => v.odd).map(v => v.tok));
+    toks.forEach((t, i) => {
+      t.spaceAfter = !!toks[i + 1] && toks[i + 1].type === 'space';
+      if (t.type === 'tab' || t.type === 'br') { Object.assign(t, tokenStyle(t)); t.width = 0; return; }
+      prepare(t, oddSet.has(t), toks[i - 1], toks[i + 1]);
+    });
+
+    const indStart = pr.indStart || 0, indEnd = pr.indEnd || 0;
+    const firstAdj = (pr.firstLine || 0) - (pr.hanging || 0);
+    const tabStops = (pr.tabs || []).slice().sort((a, b) => a - b);
+    const nextTab = pos => {
+      const cands = tabStops.filter(x => x > pos + 0.5);
+      if (pr.hanging && pos < indStart - 0.5) cands.push(indStart);
+      if (cands.length) return Math.min(...cands);
+      return (Math.floor(pos / opts.defaultTab + 1e-6) + 1) * opts.defaultTab;
+    };
+
+    // greedy line breaking in logical order
+    const lines = [];
+    let line = [], pos = indStart + firstAdj, first = true;
+    const endPos = () => boxW - indEnd;
+    const flush = (last) => {
+      while (line.length && line[line.length - 1].type === 'space') line.pop();
+      lines.push({ toks: line, first, last });
+      line = []; first = false; pos = indStart;
+    };
+    let i = 0;
+    while (i < toks.length) {
+      const t = toks[i];
+      if (t.type === 'br') { flush(true); i++; continue; }
+      if (t.type === 'space') {
+        if (line.length) { line.push(t); pos += t.width; }
+        i++; continue;
+      }
+      if (t.type === 'tab') {
+        const stop = nextTab(pos);
+        if (stop > endPos() + 0.5 && line.length) flush(false);
+        const s2 = nextTab(pos);
+        t.width = Math.max(0, s2 - pos);
+        line.push(t); pos = s2; i++;
+        continue;
+      }
+      let j = i, w = 0;
+      while (j < toks.length && !['space', 'tab', 'br'].includes(toks[j].type)) { w += toks[j].width; j++; }
+      if (line.some(x => x.type !== 'space') && pos + w > endPos() + 0.01) flush(false);
+      for (let k = i; k < j; k++) line.push(toks[k]);
+      pos += w; i = j;
+    }
+    if (line.length || !lines.length) flush(true);
+    else lines[lines.length - 1].last = true;
+
+    // alignment
+    const jc = pr.jc || 'start';
+    let align;
+    if (jc === 'center') align = 'center';
+    else if (['both', 'distribute', 'thaiDistribute', 'lowKashida', 'mediumKashida', 'highKashida'].includes(jc)) align = 'justify';
+    else if (jc === 'right' || jc === 'end') align = rtl ? 'left' : 'right';
+    else align = rtl ? 'right' : 'left';
+
+    const markStyle = tokenStyle({ type: 'ar', style: p.markR });
+    const entries = [];
+    for (const ln of lines) {
+      const startInd = indStart + (ln.first ? firstAdj : 0);
+      const leftInd = rtl ? indEnd : startInd;
+      const rightInd = rtl ? startInd : indEnd;
+      const avail = boxW - leftInd - rightInd;
+      ln.toks.forEach((t, k) => { t.logical = k; });
+      const visual = bidiReorder(ln.toks, rtl).map(v => { v.tok.odd = v.odd; return v.tok; });
+      const lineW = visual.reduce((a, t) => a + t.width, 0);
+      const spaces = visual.filter(t => t.type === 'space').length;
+      const hasTab = visual.some(t => t.type === 'tab');
+      let x0, extra = 0;
+      if (align === 'center') x0 = leftInd + (avail - lineW) / 2;
+      else if (align === 'right') x0 = boxW - rightInd - lineW;
+      else if (align === 'left') x0 = leftInd;
       else {
-        if (cur.trailing) { words.push(cur); cur = { toks: [], trailing: 0, forceBreak: false }; }
-        cur.toks.push(t);
+        if (!ln.last && spaces && !hasTab && lineW < avail) extra = (avail - lineW) / spaces;
+        x0 = rtl ? boxW - rightInd - lineW - extra * spaces : leftInd;
+      }
+      // line height from the largest font on the line (or the paragraph mark when empty)
+      const sized = ln.toks.filter(t => t.type !== 'tab' && t.type !== 'br');
+      const ref = sized.length ? sized.reduce((a, t) => (t.size > a.size ? t : a)) : markStyle;
+      const nat = ref.size * lineRatio(ref.fontName);
+      let h;
+      if (pr.lineRule === 'exact') h = pr.line / TW;
+      else if (pr.lineRule === 'atLeast') h = Math.max(nat, pr.line / TW);
+      else h = nat * ((pr.line || 240) / 240);
+      const baseline = pr.lineRule === 'exact' ? h * 0.78 : h - nat * 0.27;
+
+      const items = [];
+      let x = x0;
+      for (const t of visual) {
+        const w = t.width + (t.type === 'space' ? extra : 0);
+        if (t.type !== 'tab') {
+          items.push({
+            kind: t.type === 'space' ? 'space' : 'text', x, w, run: t.run, logical: t.logical,
+            odd: t.odd, spaceAfter: t.spaceAfter,
+            font: t.font, size: t.size, rise: t.rise,
+            color: t.style && t.style.color, u: t.style && t.style.u, bg: t.style && t.style.bg,
+          });
+        }
+        x += w;
+      }
+      // underline/highlight spaces only when the neighbours are also underlined/highlighted
+      items.forEach((it, k) => {
+        if (it.kind !== 'space') return;
+        const a = items[k - 1], b = items[k + 1];
+        if (!(a && b && a.u && b.u)) it.u = false;
+        if (!(a && b && a.bg && b.bg)) it.bg = null;
+      });
+      items.sort((a, b) => a.logical - b.logical); // write to the PDF in reading order
+      entries.push({ h, baseline, items });
+    }
+    return {
+      entries,
+      before: pr.before || 0,
+      after: pr.after || 0,
+      contextual: !!pr.contextual,
+      styleId: p.styleId,
+      keepNext: !!pr.keepNext,
+      shade: pr.shade,
+    };
+  }
+
+  // ---- drawing helpers ----
+  let drawn = 0;
+  // Draw one token as its own text object. Glyphs are written in logical (reading) order, each
+  // placed at its visual position with its own text matrix — similar to Chrome/Skia output — so
+  // extractors that read glyphs in stream order (pdfminer, PyMuPDF, many AI detectors) get words
+  // the right way round while PDF viewers (Chrome, poppler) still reorder them correctly.
+  // Each glyph carries exactly one letter: extra letters of a ligature (e.g. لا) are added as
+  // invisible glyphs, and a real space glyph after the word keeps word boundaries.
+  // ToUnicode CMap for the glyphs we drew; glyphs that carry no letter (e.g. kashida connectors) get no entry
+  function toUnicodeCMap(glyphs) {
+    const h4 = n => n.toString(16).padStart(4, '0');
+    const u16 = cp => cp > 0xFFFF ? h4(0xD800 + ((cp - 0x10000) >> 10)) + h4(0xDC00 + ((cp - 0x10000) & 0x3FF)) : h4(cp);
+    const entries = glyphs.filter(g => g.codePoints.length).map(g => `<${h4(g.id)}> <${g.codePoints.map(u16).join('')}>`);
+    let body = '';
+    for (let i = 0; i < entries.length; i += 100) {
+      const chunk = entries.slice(i, i + 100);
+      body += `${chunk.length} beginbfchar\n${chunk.join('\n')}\nendbfchar\n`;
+    }
+    return '/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n' +
+      '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n' +
+      '/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n' +
+      '1 begincodespacerange\n<0000><ffff>\nendcodespacerange\n' + body +
+      'endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend';
+  }
+  function register(font, id, codePoints, advanceWidth) {
+    if (!font.usedGlyphs.has(id)) font.usedGlyphs.set(id, { id, codePoints, advanceWidth });
+  }
+  // A spare glyph id (taken from the end of the font, never drawn visibly) that stands for one
+  // letter of a ligature in the text layer; its width is 0 so it adds nothing to the layout.
+  const HIDDEN_WIDTH = 0.06; // em; text-selection width for zero-width glyphs
+  function hasOutline(fk, id) {
+    try { const b = fk.getGlyph(id).bbox; return b && b.maxX - b.minX > 0 && b.maxY - b.minY > 0; } catch (e) { return false; }
+  }
+  function hiddenLetterGlyph(font, cp) {
+    if (font.hiddenLetters.has(cp)) return font.hiddenLetters.get(cp);
+    const fk = font.embedder.font;
+    let id = font.nextSpareGlyph ?? fk.numGlyphs - 1;
+    // a glyph with an outline: some viewers ignore characters drawn with empty glyphs
+    while (id > 1 && (font.usedGlyphs.has(id) || !hasOutline(fk, id))) id--;
+    font.nextSpareGlyph = id - 1;
+    font.hiddenLetters.set(cp, id);
+    return id;
+  }
+  function drawRun(page, run, x, y, size, font, color, spaceSide) {
+    const fk = font.embedder.font;
+    const ops = [pushGraphicsState(), beginText(), setFillingColor(color), setFontAndSize(fontKey(page, font), size)];
+    const show = (id, gx, gy) => ops.push(
+      setTextMatrix(1, 0, 0, 1, gx, gy),
+      PDFOperator.of('Tj', [PDFHexString.of(id.toString(16).padStart(4, '0'))]),
+    );
+    const order = run.glyphs.map((_, i) => i);
+    if (run.rtl) order.reverse();
+    const shapes = [];
+    for (const i of order) {
+      const g = run.glyphs[i];
+      const gx = x + g.x * size;
+      if (!g.cps.length) { // connector glyphs carry no letter
+        shapes.push([g, gx]);
+        // widen the letter to its left so extractors see no gap (widths only affect text selection boxes)
+        const nb = run.glyphs[i - 1];
+        if (nb && nb.cps.length) {
+          const need = Math.round((g.x + g.advanceWidth / fk.unitsPerEm - nb.x) * fk.unitsPerEm);
+          font.widthBoost.set(nb.id, Math.max(font.widthBoost.get(nb.id) || 0, need));
+        }
+        continue;
+      }
+      register(font, g.id, g.cps.slice(0, 1), g.advanceWidth);
+      show(g.id, gx, y + g.y * size);
+      const extra = g.cps.slice(1);
+      if (extra.length) {
+        // invisible, zero-width glyphs (one per extra letter) right where the next letter starts
+        ops.push(setTextRenderingMode(TextRenderingMode.Invisible));
+        const hw = HIDDEN_WIDTH * size;
+        const edge = run.rtl ? gx - hw : gx + g.advanceWidth / fk.unitsPerEm * size;
+        for (const cp of extra) show(hiddenLetterGlyph(font, cp), edge, y);
+        ops.push(setTextRenderingMode(TextRenderingMode.Fill));
       }
     }
-    if (cur.toks.length || cur.forceBreak) words.push(cur);
-
-    // Resolve direction for punctuation (needed for bracket mirroring) per block.
-    const flat = words.flatMap(w => w.toks);
-    visualOrder(flat).forEach(v => { v.tok.rtl = v.rtl; });
-    flat.forEach(t => prepare(t, size));
-    words.forEach(w => { w.width = w.toks.reduce((a, t) => a + t.width, 0); });
-
-    const lines = [];
-    let line = [], lineW = 0;
-    for (const w of words) {
-      const add = (line.length ? spaceW : 0) + w.width;
-      if (line.length && lineW + add > maxW) { lines.push({ words: line, last: false }); line = []; lineW = 0; }
-      if (w.toks.length) { lineW += (line.length ? spaceW : 0) + w.width; line.push(w); }
-      if (w.forceBreak) { lines.push({ words: line, last: true }); line = []; lineW = 0; }
+    if (spaceSide && fk.hasGlyphForCodePoint(32)) {
+      const sp = fk.glyphForCodePoint(32);
+      register(font, sp.id, [32], sp.advanceWidth);
+      const w = sp.advanceWidth / fk.unitsPerEm * size;
+      show(sp.id, spaceSide === 'left' ? x - w : x + run.width * size, y);
     }
-    if (line.length) lines.push({ words: line, last: true });
+    ops.push(endText(), popGraphicsState());
+    page.pushOperators(...ops);
+    // draw letter-less glyphs (e.g. kashida connectors) as vector outlines, so they add no text
+    for (const [g, gx] of shapes) {
+      const path = fk.getGlyph(g.id).path.scale(1, -1).toSVG();
+      if (path) page.drawSvgPath(path, { x: gx, y: y + g.y * size, scale: size / fk.unitsPerEm, color, borderWidth: 0 });
+    }
+  }
+  function fontKey(page, font) {
+    page.setFont(font);
+    return page.fontKey;
+  }
 
-    for (const ln of lines) {
-      if (y - lineH < margin) newPage();
-      y -= lineH;
-      if (!ln.words.length) continue;
-
-      // Build the logical token sequence with explicit space tokens, then reorder visually.
-      const seq = [];
-      ln.words.forEach((w, i) => {
-        if (i) seq.push({ type: 'space', width: spaceW });
-        seq.push(...w.toks);
-      });
-      const textW = seq.reduce((a, t) => a + t.width, 0);
-      const gaps = ln.words.length - 1;
-      const extra = opts.align === 'justify' && !ln.last && gaps > 0 && !block.heading
-        ? (maxW - textW) / gaps : 0;
-
-      // Start at the right margin and walk leftward.
-      let currentX = pageW - margin - indent;
-      const baseline = y + lineH * 0.3;
-      for (const { tok } of visualOrder(seq)) {
-        if (tok.type === 'space') { currentX -= tok.width + extra; continue; }
-        currentX -= tok.width;
-        page.drawText(tok.draw, { x: currentX, y: baseline, size, font: tok.font, color });
+  function drawLine(page, entry, boxX, top) {
+    for (const it of entry.items) {
+      const bx = boxX + it.x;
+      const by = top - entry.baseline + (it.rise || 0);
+      if (it.bg) {
+        page.drawRectangle({ x: bx, y: by - it.size * 0.4, width: it.w, height: it.size * 1.45, color: hex(it.bg) });
+      }
+      if (it.kind === 'text' && it.run.glyphs.length) {
+        const color = it.color ? hex(it.color) : rgb(0, 0, 0);
+        drawRun(page, it.run, bx, by, it.size, it.font, color, it.spaceAfter ? (it.odd ? 'left' : 'right') : null);
         drawn++;
       }
+      if (it.u) {
+        const uy = by - it.size * 0.15;
+        page.drawLine({ start: { x: bx, y: uy }, end: { x: bx + it.w, y: uy }, thickness: Math.max(0.5, it.size * 0.05), color: it.color ? hex(it.color) : rgb(0, 0, 0) });
+      }
     }
-    y -= baseSize * (block.heading ? 0.6 : 0.4); // paragraph spacing
+  }
 
-    if (bi % 20 === 0) {
-      onProgress(bi / blocks.length);
-      await new Promise(r => setTimeout(r)); // keep the UI responsive
+  // ---- page flow ----
+  const pages = []; // { page, sect, num }
+  let page = null, y = 0, sect = null, atTop = true, pageNum = 0;
+  const bottom = () => sect.props.mb;
+  function newPage(section) {
+    sect = section || sect;
+    page = pdf.addPage([sect.props.w, sect.props.h]);
+    pageNum = (section && section.props.pgStart !== undefined) ? section.props.pgStart : pageNum + 1;
+    pages.push({ page, sect, num: pageNum, firstOfSection: !!section });
+    y = sect.props.h - sect.props.mt;
+    atTop = true;
+  }
+  const contentBox = () => ({ x: sect.props.ml, w: sect.props.w - sect.props.ml - sect.props.mr });
+
+  let prev = null; // previous paragraph layout (for spacing)
+  function placeParagraph(p, nextBlock) {
+    const box = contentBox();
+    const L = layoutParagraph(p, box.w);
+    const same = prev && prev.styleId === L.styleId;
+    let gap = (prev ? (same && prev.contextual ? 0 : prev.after) : 0) + (same && L.contextual ? 0 : L.before);
+    // space before is kept at the top of a page only after a hard break (or at the start)
+    if (atTop) gap = !prev || prev.pageBreak ? L.before : 0;
+    // keep-with-next: make sure this paragraph and the next one's first line share a page
+    if (L.keepNext && nextBlock && nextBlock.type === 'p') {
+      const next = layoutParagraph(nextBlock, box.w);
+      const need = gap + L.entries.reduce((a, e) => a + e.h, 0) + L.after + next.before + (next.entries[0] ? next.entries[0].h : 0);
+      if (!atTop && y - need < bottom() && need < sect.props.h - sect.props.mt - bottom()) newPage();
     }
+    y -= gap;
+    for (const e of L.entries) {
+      if (y - e.h < bottom() - 0.01 && !atTop) newPage();
+      if (L.shade) page.drawRectangle({ x: box.x, y: y - e.h, width: box.w, height: e.h, color: hex(L.shade) });
+      drawLine(page, e, box.x, y);
+      y -= e.h; atTop = false;
+    }
+    prev = L;
+  }
+
+  function placeTable(t) {
+    const box = contentBox();
+    let grid = t.grid.slice();
+    const maxCols = Math.max(1, ...t.rows.map(r => r.gridBefore + r.cells.reduce((a, c) => a + c.span, 0)));
+    while (grid.length < maxCols) grid.push(0);
+    if (!grid.some(x => x > 0)) grid = grid.map(() => box.w / grid.length);
+    else grid = grid.map(x => x || 20);
+    const total = grid.reduce((a, b) => a + b, 0);
+    if (total > box.w) grid = grid.map(x => x * box.w / total);
+    const tw = grid.reduce((a, b) => a + b, 0);
+    let left;
+    if (t.jc === 'center') left = box.x + (box.w - tw) / 2;
+    else if (t.rtl) left = t.jc === 'right' || t.jc === 'end' ? box.x + t.ind : box.x + box.w - tw - t.ind;
+    else left = t.jc === 'right' || t.jc === 'end' ? box.x + box.w - tw - t.ind : box.x + t.ind;
+    const sum = (a, b) => grid.slice(a, b).reduce((s, x) => s + x, 0);
+    const cellX = (gi, span) => t.rtl ? left + tw - sum(0, gi + span) : left + sum(0, gi);
+
+    // pre-compute cell geometry + content
+    const rows = t.rows.map(r => {
+      let gi = r.gridBefore;
+      return r.cells.map(c => {
+        const cell = { ...c, gi, x: cellX(gi, c.span), w: sum(gi, gi + c.span) };
+        gi += c.span;
+        return cell;
+      });
+    });
+    const continues = (ri, gi) => rows[ri] && rows[ri].some(c => c.gi === gi && c.vMerge === 'continue');
+    const B = t.borders, M = t.cellMar;
+
+    rows.forEach((cells, ri) => {
+      const r = t.rows[ri];
+      // lay out every cell's paragraphs into vertical entries
+      for (const c of cells) {
+        const innerW = Math.max(10, c.w - M.left - M.right);
+        c.entries = [];
+        if (c.vMerge === 'continue') continue;
+        let pv = null;
+        for (const p of c.blocks) {
+          const L = layoutParagraph(p, innerW);
+          const same = pv && pv.styleId === L.styleId;
+          const gap = (pv ? (same && pv.contextual ? 0 : pv.after) : 0) + (same && L.contextual ? 0 : L.before);
+          if (gap && c.entries.length) c.entries.push({ h: gap, items: [] });
+          c.entries.push(...L.entries);
+          pv = L;
+        }
+      }
+      const contentH = c => c.entries.reduce((a, e) => a + e.h, 0);
+      const fullH = () => {
+        let h = Math.max(0, ...cells.map(contentH)) + M.top + M.bottom;
+        if (r.hRule === 'exact' && r.height) h = r.height;
+        else if (r.height) h = Math.max(h, r.height);
+        return h;
+      };
+      let startedRow = false;
+      const ptr = cells.map(() => 0);
+      for (let guard = 0; guard < 500; guard++) {
+        const avail = y - bottom();
+        const remaining = cells.map((c, k) => c.entries.slice(ptr[k]));
+        const need = startedRow
+          ? Math.max(0, ...remaining.map(es => es.reduce((a, e) => a + e.h, 0))) + M.top + M.bottom
+          : fullH();
+        let partH, take;
+        if (need <= avail + 0.01) {
+          partH = need; take = remaining.map(es => es.length);
+        } else {
+          // split the row at the page bottom (Word lets rows break across pages)
+          take = remaining.map(es => {
+            let h = M.top + M.bottom, n = 0;
+            while (n < es.length && h + es[n].h <= avail) { h += es[n].h; n++; }
+            return n;
+          });
+          // short rows move to the next page whole; tall rows are split here
+          const pageH = sect.props.h - sect.props.mt - bottom();
+          if (!atTop && (take.every(n => n === 0) || (!startedRow && need < pageH * 0.5))) { newPage(); continue; }
+          if (atTop && take.every((n, k) => n === 0 && remaining[k].length)) take = take.map((n, k) => (remaining[k].length ? 1 : 0));
+          partH = Math.min(avail, need);
+        }
+        const done = take.every((n, k) => n === remaining[k].length);
+        // draw the part
+        cells.forEach((c, k) => {
+          if (c.fill) page.drawRectangle({ x: c.x, y: y - partH, width: c.w, height: partH, color: hex(c.fill) });
+          const part = remaining[k].slice(0, take[k]);
+          const ch = part.reduce((a, e) => a + e.h, 0);
+          let off = M.top;
+          if (!startedRow && done) {
+            if (c.vAlign === 'center') off += (partH - M.top - M.bottom - ch) / 2;
+            else if (c.vAlign === 'bottom') off += partH - M.top - M.bottom - ch;
+          }
+          let ty = y - off;
+          for (const e of part) { if (e.items.length) drawLine(page, e, c.x + M.left, ty); ty -= e.h; }
+          ptr[k] += take[k];
+          // borders
+          const first = c.gi === 0 || (r.gridBefore && c.gi === r.gridBefore);
+          const lastCol = c.gi + c.span >= grid.length;
+          const physLeftOuter = t.rtl ? lastCol : first;
+          const physRightOuter = t.rtl ? first : lastCol;
+          const cb = c.borders || {};
+          const side = (own, outer, inner, isOuter) => own !== undefined ? own : (isOuter ? outer : inner);
+          const top = c.vMerge === 'continue' && !startedRow ? null : side(cb.top, B.top, B.insideH, ri === 0);
+          const bot = continues(ri + 1, c.gi) && done ? null : side(cb.bottom, B.bottom, B.insideH, ri === rows.length - 1);
+          const lft = side(cb.left, B.left, B.insideV, physLeftOuter);
+          const rgt = side(cb.right, B.right, B.insideV, physRightOuter);
+          const line = (b, x1, y1, x2, y2) => b && page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: b.w, color: hex(b.color) });
+          line(top, c.x, y, c.x + c.w, y);
+          line(bot, c.x, y - partH, c.x + c.w, y - partH);
+          line(lft, c.x, y, c.x, y - partH);
+          line(rgt, c.x + c.w, y, c.x + c.w, y - partH);
+        });
+        y -= partH; atTop = false; startedRow = true;
+        if (done) break;
+        newPage();
+      }
+    });
+    prev = { after: 0, styleId: null, contextual: false };
+  }
+
+  // ---- body ----
+  const totalBlocks = docx.sections.reduce((a, s) => a + s.blocks.length, 0) || 1;
+  let doneBlocks = 0;
+  for (let si = 0; si < docx.sections.length; si++) {
+    const s = docx.sections[si];
+    if (si === 0 || s.props.type !== 'continuous' || !page) { newPage(s); if (prev) prev.pageBreak = true; }
+    else sect = s;
+    for (let bi = 0; bi < s.blocks.length; bi++) {
+      const b = s.blocks[bi];
+      if (b.type === 'pagebreak') { newPage(); if (prev) prev.pageBreak = true; }
+      else if (b.type === 'p') placeParagraph(b, s.blocks[bi + 1]);
+      else if (b.type === 'table') placeTable(b);
+      if (++doneBlocks % 25 === 0) {
+        onProgress(doneBlocks / totalBlocks);
+        await new Promise(r => setTimeout(r)); // keep the UI responsive
+      }
+    }
+  }
+
+  // ---- headers & footers (drawn last so NUMPAGES is known) ----
+  const totalPages = pdf.getPageCount();
+  let lastRefs = { headers: {}, footers: {} };
+  const refsBySect = new Map();
+  for (const s of docx.sections) {
+    const refs = {
+      headers: Object.keys(s.props.headers).length ? s.props.headers : lastRefs.headers,
+      footers: Object.keys(s.props.footers).length ? s.props.footers : lastRefs.footers,
+    };
+    refsBySect.set(s, refs);
+    lastRefs = refs;
+  }
+  for (const pg of pages) {
+    const sp = pg.sect.props;
+    const refs = refsBySect.get(pg.sect);
+    const pick = set => (sp.titlePg && pg.firstOfSection ? set.first : set.default);
+    const box = { x: sp.ml, w: sp.w - sp.ml - sp.mr };
+    const fields = { PAGE: pg.num, NUMPAGES: totalPages };
+    const layoutHF = blocks => {
+      const lines = [];
+      let pv = null;
+      for (const p of flattenCellBlocks(blocks || [])) {
+        const L = layoutParagraph(p, box.w, fields);
+        if (pv) lines.push({ h: pv.after + L.before, items: [] });
+        lines.push(...L.entries);
+        pv = L;
+      }
+      return lines;
+    };
+    const head = layoutHF(docx.hf[pick(refs.headers)]);
+    let ty = sp.h - sp.header;
+    for (const e of head) { if (e.items.length) drawLine(pg.page, e, box.x, ty); ty -= e.h; }
+    const foot = layoutHF(docx.hf[pick(refs.footers)]);
+    ty = sp.footer + foot.reduce((a, e) => a + e.h, 0);
+    for (const e of foot) { if (e.items.length) drawLine(pg.page, e, box.x, ty); ty -= e.h; }
+  }
+
+  for (const f of new Set(Object.values(fontCache).flatMap(fam => [fam.regular, fam.bold]))) {
+    const fk = f.embedder.font;
+    if (fk.hasGlyphForCodePoint(32)) register(f, fk.glyphForCodePoint(32).id, [32], fk.glyphForCodePoint(32).advanceWidth);
+    for (const [cp, id] of f.hiddenLetters) {
+      if (!f.usedGlyphs.has(id)) f.usedGlyphs.set(id, { id, codePoints: [cp], advanceWidth: 0 });
+    }
+    const list = [...f.usedGlyphs.values()].sort((a, b) => a.id - b.id)
+      .map(g => ({ ...g, advanceWidth: Math.max(g.advanceWidth, f.widthBoost.get(g.id) || 0, HIDDEN_WIDTH * fk.unitsPerEm) }));
+    f.embedder.glyphCache = { access: () => list };
+    f.embedder.embedUnicodeCmap = context => context.register(context.flateStream(toUnicodeCMap(list)));
   }
 
   onProgress(1);
   const bytes = await pdf.save();
-  return { bytes, pages: pdf.getPageCount(), drawn };
+  return { bytes, pages: totalPages, drawn };
 }
 
 /* ======================================================================
@@ -581,30 +1631,19 @@ $('convert').addEventListener('click', async () => {
   $('convert').disabled = true;
   $('download').classList.add('hidden');
   $('stats').textContent = '';
+  $('warnings').textContent = '';
   try {
     setStatus('جارٍ تحميل المكتبات…', 0.05);
-    await Promise.all([loadLib('PDFLib'), loadLib('fontkit'), loadLib('mammoth')]);
+    await Promise.all([loadLib('PDFLib'), loadLib('fontkit'), loadLib('JSZip')]);
 
-    setStatus('جارٍ تحميل الخط العربي…', 0.12);
-    let fontBytes;
-    if (customFont) fontBytes = { regular: customFont, bold: null };
-    else {
-      const [regular, bold] = await Promise.all([fetchFirst(FONT_SOURCES.regular), fetchFirst(FONT_SOURCES.bold)]);
-      if (!regular) throw new Error('تعذّر تحميل خط Amiri. اختر ملف خط ‎.ttf‎ من "خط مخصص".');
-      fontBytes = { regular, bold };
-    }
+    setStatus('جارٍ قراءة مستند Word وتنسيقه…', 0.15);
+    const docx = await readDocx(await selectedFile.arrayBuffer());
 
-    setStatus('جارٍ قراءة مستند Word…', 0.2);
-    const blocks = await docxToBlocks(await selectedFile.arrayBuffer());
-    if (!blocks.length) throw new Error('لم يُعثر على أي نص في المستند.');
-
-    setStatus('جارٍ رسم الكلمات في ملف PDF…', 0.25);
-    const result = await buildPdf(blocks, {
-      fontBytes,
-      fontSize: Math.min(32, Math.max(8, +$('fontSize').value || 14)),
-      lineSpacing: +$('lineSpacing').value,
-      align: $('align').value,
-      pageSize: $('pageSize').value,
+    setStatus('جارٍ تحميل الخطوط ورسم الكلمات…', 0.25);
+    const result = await buildPdf(docx, {
+      customFont,
+      fontChoice: $('fontChoice').value,
+      defaultTab: docx.ctx.defaultTab,
       title: selectedFile.name.replace(/\.docx$/i, ''),
     }, p => setStatus('جارٍ رسم الكلمات في ملف PDF… ' + Math.round(p * 100) + '%', 0.25 + p * 0.7));
 
@@ -619,6 +1658,7 @@ $('convert').addEventListener('click', async () => {
     $('previewCard').classList.remove('hidden');
     setStatus('تم إنشاء الملف بنجاح ✓', 1, 'ok');
     $('stats').textContent = `عدد الصفحات: ${result.pages} — عدد الكتل النصية المرسومة: ${result.drawn.toLocaleString('ar')}`;
+    if (docx.ctx.images) $('warnings').textContent = `تنبيه: يحتوي المستند على ${docx.ctx.images} صورة/شكل لم يتم تضمينها في ملف PDF.`;
   } catch (err) {
     console.error(err);
     setStatus('حدث خطأ: ' + err.message, 0, 'err');
